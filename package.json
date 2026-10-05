@@ -3,6 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.13" },
-  "scripts": { "start": "node server/server.js", "test": "node server/test.js" }
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "node server/test.js && node server/netlify.test.js"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
 }
