@@ -59,5 +59,20 @@ assert.equal((await call('PUT', '/leads/' + state.leads[0].id, { stage: 'נסג�
 assert.equal((await call('DELETE', '/posts/' + p.id)).status, 200);
 assert.equal((await call('POST', '/logout')).status, 200);
 assert.equal((await call('GET', '/state')).status, 401);
+
+// The first request may arrive before ADMIN_* env vars are available; the admin must still be created later.
+{
+  const mem2 = new Map();
+  const blobs2 = { ...fakeBlobs, get: async k => mem2.has(k) ? JSON.parse(mem2.get(k)) : null, setJSON: async (k, v) => { mem2.set(k, JSON.stringify(v)); },
+    delete: async k => { mem2.delete(k); }, list: async ({ prefix }) => ({ blobs: [...mem2.keys()].filter(k => k.startsWith(prefix)).map(key => ({ key })) }) };
+  const h2 = makeHandler(createApp(blobsStore(blobs2)));
+  const login = () => h2(new Request('https://site.test/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'late@b.co', password: 'password123' }) }), {});
+  const saved = process.env.ADMIN_PASSWORD, savedEmail = process.env.ADMIN_EMAIL;
+  delete process.env.ADMIN_PASSWORD; delete process.env.ADMIN_EMAIL;
+  assert.equal((await login()).status, 401);
+  process.env.ADMIN_EMAIL = 'late@b.co'; process.env.ADMIN_PASSWORD = 'password123';
+  assert.equal((await login()).status, 200, 'admin is created once env vars appear');
+  process.env.ADMIN_PASSWORD = saved; process.env.ADMIN_EMAIL = savedEmail;
+}
 console.log('netlify adapter tests passed');
 process.exit(0);
