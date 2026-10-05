@@ -126,7 +126,10 @@ export function createApp(store) {
     if (env('ADMIN_EMAIL') && env('ADMIN_PASSWORD')) {
       await store.addUser(env('ADMIN_EMAIL').toLowerCase(), 'מנהל', hashPw(env('ADMIN_PASSWORD')), 'admin');
       console.log('Admin user created:', env('ADMIN_EMAIL'));
-    } else console.warn('No users yet. Set ADMIN_EMAIL and ADMIN_PASSWORD and restart.');
+    } else {
+      console.warn('No users yet. Set ADMIN_EMAIL and ADMIN_PASSWORD (and redeploy).');
+      bootstrapped = undefined; // retry on the next request instead of caching "no admin"
+    }
   })().catch(e => { bootstrapped = undefined; throw e; });
 
   async function sessionUser(req) {
