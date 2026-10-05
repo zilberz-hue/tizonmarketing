@@ -25,7 +25,20 @@ npm test
 ### בעלות ואבטחה
 הנתונים נמצאים רק בתיקיית `data/` בשרת שלכם. הגדירו HTTPS (למשל Caddy/nginx מול השרת) לפני חשיפה לאינטרנט, וגבו את `data/` באופן קבוע. מפתחות API נשמרים ב-`.env` בלבד ולא נשלחים לדפדפן.
 
-## פריסה: Netlify + (השרת שלכם או Firebase)
+## פריסה בחינם: Netlify בלבד (ללא Firebase וללא כרטיס אשראי)
+
+הדרך הפשוטה ביותר. הבק-אנד רץ כ-Netlify Functions (`netlify/functions/api.mjs`), הנתונים נשמרים ב-Netlify Blobs, והמתזמן הוא Scheduled Function שרצה כל דקה (`netlify/functions/scheduler.mjs`). אותו קוד ליבה (`server/core.js`) כמו בשרת העצמי.
+
+1. ב-Netlify, בפרויקט, **Add new project → Import from Git** ובחרו את הריפו, ענף `main`. `netlify.toml` מגדיר הכול.
+2. **Site configuration → Environment variables**, הוסיפו:
+   - `ADMIN_EMAIL` ו-`ADMIN_PASSWORD` (8 תווים לפחות) – המנהל הראשוני נוצר בבקשה הראשונה.
+   - אופציונלי: `ANTHROPIC_API_KEY`, `FB_PAGE_ID` + `FB_PAGE_TOKEN`, `TG_BOT_TOKEN` + `TG_CHAT_ID`, `PUBLISH_WEBHOOK_URL`.
+   - אל תגדירו `BACKEND_URL` / `FIREBASE_PROJECT_ID` (הם מפנים לבק-אנד חיצוני).
+3. **Deploys → Trigger deploy**. נכנסים ל-`/app/` עם האימייל והסיסמה. אחרי הכניסה הראשונה מוחקים את `ADMIN_PASSWORD` מהמשתנים.
+
+הערה: Blobs ללא טרנזקציות, ולכן "תפיסת" פוסט לפרסום היא best-effort; המתזמן רץ במופע אחד בדקה, וזה מספיק בשימוש רגיל. מגבלות החבילה החינמית של Netlify (קריאות לפונקציות, זמן ריצה) חלות.
+
+## חלופות: שרת עצמי או Firebase (מסלול Blaze)
 
 האתר והממשק עולים ל-Netlify, וכל קריאת `/api/*` מועברת לבק-אנד שבחרתם. אותו קוד (`server/core.js`) רץ בשני המצבים:
 
