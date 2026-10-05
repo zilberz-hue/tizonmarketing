@@ -8,13 +8,18 @@ let me = null, caps = {};
 const camp = id => db.campaigns.find(c => c.id === id);
 const campName = id => camp(id)?.name || 'ללא קמפיין';
 
+const TOKEN_KEY = 'tizon-token';
+const getToken = () => { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } };
+const setToken = t => { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch {} };
+
 async function api(method, path, body) {
+  const token = getToken();
   const r = await fetch('/api' + path, {
-    method, credentials: 'same-origin',
-    headers: { 'content-type': 'application/json', 'x-requested-with': 'tizon' },
+    method,
+    headers: { 'content-type': 'application/json', 'x-requested-with': 'tizon', ...(token && { authorization: 'Bearer ' + token }) },
     body: body ? JSON.stringify(body) : undefined
   });
-  if (r.status === 401 && path !== '/login') { showLogin(); throw new Error('auth'); }
+  if (r.status === 401 && path !== '/login') { setToken(''); showLogin(); throw new Error('auth'); }
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || 'שגיאה');
   return d;
@@ -35,11 +40,11 @@ function showLogin() { $('#login').hidden = false; }
 $('#login-form').addEventListener('submit', safe(async e => {
   e.preventDefault();
   const f = Object.fromEntries(new FormData(e.target));
-  await api('POST', '/login', f);
+  setToken((await api('POST', '/login', f)).token);
   e.target.reset();
   await refresh();
 }));
-$('#logout').onclick = safe(async () => { await api('POST', '/logout'); location.reload(); });
+$('#logout').onclick = safe(async () => { await api('POST', '/logout').catch(() => {}); setToken(''); location.reload(); });
 
 $('#tabs').addEventListener('click', e => {
   const t = e.target.dataset.tab; if (!t) return;

@@ -19,11 +19,12 @@ const { server, tick } = await import('./server.js');
 await new Promise(r => server.listen(0, r));
 const base = `http://127.0.0.1:${server.address().port}`;
 
-let cookie = '';
+let token = '';
 const call = async (method, p, body, hdr = {}) => {
-  const r = await fetch(base + p, { method, headers: { 'content-type': 'application/json', 'x-requested-with': 'tizon', cookie, ...hdr }, body: body && JSON.stringify(body) });
-  const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0];
-  return { status: r.status, data: await r.json().catch(() => null) };
+  const r = await fetch(base + p, { method, headers: { 'content-type': 'application/json', 'x-requested-with': 'tizon', ...(token && { authorization: 'Bearer ' + token }), ...hdr }, body: body && JSON.stringify(body) });
+  const data = await r.json().catch(() => null);
+  if (data?.token) token = data.token;
+  return { status: r.status, data };
 };
 
 assert.equal((await call('GET', '/api/state')).status, 401, 'state requires login');

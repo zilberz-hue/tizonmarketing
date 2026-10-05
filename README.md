@@ -14,7 +14,7 @@ npm start              # http://localhost:3000  (האתר) ו-/app/ (המערכ�
 npm test
 ```
 
-או עם Docker: `docker build -t tizon . && docker run -p 3000:3000 -v tizon-data:/data --env-file .env tizon`
+או עם Docker (תקיפו `-e TRUST_PROXY=true` אם הוא יושב מאחורי Netlify/Caddy): `docker build -t tizon . && docker run -p 3000:3000 -v tizon-data:/data --env-file .env tizon`
 
 ### מה עובד לבד
 - **פרסום מתוזמן:** כל 30 שניות השרת מפרסם פוסטים שהגיע זמנם (3 ניסיונות, ואז התראה). חיבורים: פייסבוק (Page API), טלגרם, ו-Webhook כללי (Make/Zapier/n8n) לכל ערוץ אחר. ערוץ בלי חיבור מסומן "ידני" ושולח התראה.
@@ -24,3 +24,30 @@ npm test
 
 ### בעלות ואבטחה
 הנתונים נמצאים רק בתיקיית `data/` בשרת שלכם. הגדירו HTTPS (למשל Caddy/nginx מול השרת) לפני חשיפה לאינטרנט, וגבו את `data/` באופן קבוע. מפתחות API נשמרים ב-`.env` בלבד ולא נשלחים לדפדפן.
+
+## פריסה: Netlify + (השרת שלכם או Firebase)
+
+האתר והממשק עולים ל-Netlify, וכל קריאת `/api/*` מועברת לבק-אנד שבחרתם. אותו קוד (`server/core.js`) רץ בשני המצבים:
+
+| | שרת משלכם | Firebase |
+|---|---|---|
+| נתונים | SQLite בקובץ אצלכם | Firestore |
+| מתזמן | כל 30 שניות | Cloud Scheduler כל דקה |
+| עלות | שרת קטן (VPS) | מסלול Blaze, לפי שימוש |
+
+**Netlify** (בשני המצבים): חברו את הריפו. `netlify.toml` כבר מגדיר את הבנייה. הגדירו משתנה סביבה אחד:
+- שרת משלכם: `BACKEND_URL=https://your-server.example.com`
+- Firebase: `FIREBASE_PROJECT_ID=my-project` (אופציונלי `FIREBASE_REGION`, ברירת מחדל `europe-west1`)
+
+**Firebase:**
+```bash
+npm i -g firebase-tools && firebase login
+firebase use --add                      # בחרו פרויקט עם מסלול Blaze
+cp .env.example functions/.env          # ADMIN_EMAIL/ADMIN_PASSWORD, מפתחות חיבורים (ללא PORT/DATA_DIR)
+firebase deploy --only functions,firestore:rules
+```
+אחרי ההתחברות הראשונה כמנהל, הסירו את `ADMIN_PASSWORD` מ-`functions/.env` ופרסו שוב. כללי Firestore חוסמים גישה ישירה מהדפדפן; הכול עובר דרך הפונקציה.
+
+אפשר גם לשלב: להשאיר את שני הבק-אנדים מוכנים ולהחליף ביניהם רק על ידי שינוי `BACKEND_URL` / `FIREBASE_PROJECT_ID` ב-Netlify (הנתונים אינם עוברים אוטומטית בין שניהם).
+
+הגבלות ידועות: הגבלת הקצב היא לפי מופע בסביבת Firebase (בערך, לא מדויקת), והתחברות נשמרת בטוקן ב-`localStorage` של הדפדפן.
