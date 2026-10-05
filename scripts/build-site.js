@@ -14,8 +14,8 @@ let target;
 if (process.env.BACKEND_URL) target = process.env.BACKEND_URL.replace(/\/$/, '') + '/api/:splat';
 else if (process.env.FIREBASE_PROJECT_ID)
   target = `https://${process.env.FIREBASE_REGION || 'europe-west1'}-${process.env.FIREBASE_PROJECT_ID}.cloudfunctions.net/api/:splat`;
-else { console.error('Set BACKEND_URL or FIREBASE_PROJECT_ID in the Netlify environment.'); process.exit(1); }
+else console.warn('WARNING: BACKEND_URL / FIREBASE_PROJECT_ID not set. The site is built, but /api/* has no backend and the app will not work.');
 
-fs.writeFileSync(new URL('_redirects', out), `/api/*  ${target}  200\n`);
+if (target) fs.writeFileSync(new URL('_redirects', out), `/api/*  ${target}  200\n`);
 fs.writeFileSync(new URL('_headers', out), '/*\n  X-Content-Type-Options: nosniff\n  X-Frame-Options: DENY\n  Referrer-Policy: same-origin\n');
-console.log('Built dist/ with /api ->', target);
+console.log('Built dist/ with /api ->', target || '(no backend)');
