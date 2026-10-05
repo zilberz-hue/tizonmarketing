@@ -37,6 +37,14 @@ async function refresh() {
 }
 function showLogin() { $('#login').hidden = false; }
 
+$('#toggle-pw').onclick = e => {
+  const btn = e.currentTarget, input = btn.previousElementSibling, show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  btn.setAttribute('aria-pressed', show);
+  btn.setAttribute('aria-label', show ? 'הסתרת סיסמה' : 'הצגת סיסמה');
+  input.focus();
+};
+
 $('#login-form').addEventListener('submit', safe(async e => {
   e.preventDefault();
   const f = Object.fromEntries(new FormData(e.target));
