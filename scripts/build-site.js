@@ -7,7 +7,8 @@ import fs from 'node:fs';
 const out = new URL('../dist/', import.meta.url);
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(new URL('app/', out), { recursive: true });
-for (const f of ['index.html', 'style.css', 'script.js', 'app/index.html', 'app/app.css', 'app/app.js'])
+fs.mkdirSync(new URL('assets/', out), { recursive: true });
+for (const f of ['index.html', 'style.css', 'script.js', 'app/index.html', 'app/app.css', 'app/app.js', 'assets/logo.webp', 'assets/favicon.png'])
   fs.copyFileSync(new URL('../' + f, import.meta.url), new URL(f, out));
 
 let target;
