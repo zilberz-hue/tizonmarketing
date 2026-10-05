@@ -15,9 +15,19 @@ document.querySelectorAll('[data-count]').forEach(el => {
   }).observe(el);
 });
 
-// TODO: connect to a real backend / form service
-document.getElementById('lead-form').addEventListener('submit', e => {
+document.getElementById('lead-form').addEventListener('submit', async e => {
   e.preventDefault();
-  document.getElementById('form-status').textContent = 'תודה! נחזור אליכם בהקדם.';
-  e.target.reset();
+  const status = document.getElementById('form-status');
+  try {
+    const r = await fetch('/api/public/lead', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(Object.fromEntries(new FormData(e.target)))
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'שגיאה');
+    status.textContent = 'תודה! נחזור אליכם בהקדם.';
+    e.target.reset();
+  } catch (err) {
+    status.textContent = err.message === 'Failed to fetch' ? 'לא ניתן לשלוח כרגע, נסו שוב מאוחר יותר.' : err.message;
+  }
 });

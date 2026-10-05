@@ -30,3 +30,4 @@ select{padding:10px;border:1px solid #8886;border-radius:10px;font:inherit;backg
 .lead{background:var(--bg);border-radius:10px;padding:10px;margin-bottom:8px;font-size:.9rem;display:grid;gap:4px}
 table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #8883;text-align:start}
 .bar-track{background:var(--alt);border-radius:99px;height:10px;overflow:hidden}.bar-fill{background:linear-gradient(90deg,var(--brand),var(--brand2));height:100%}
+.login{position:fixed;inset:0;background:var(--bg);display:grid;place-items:center;z-index:50}.login[hidden]{display:none}.login .panel{width:min(360px,90vw)}

@@ -8,6 +8,10 @@
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
+<div id="login" class="login"><form id="login-form" class="panel"><h3>התחברות</h3>
+  <label>אימייל <input name="email" type="email" required autocomplete="username"></label>
+  <label>סיסמה <input name="password" type="password" required autocomplete="current-password"></label>
+  <button class="btn btn-sm">כניסה</button></form></div>
 <header class="header"><div class="container nav">
   <a class="logo" href="../index.html">טיזון<span>שיווק</span></a>
   <nav id="tabs">
@@ -19,7 +23,7 @@
   </nav>
   <div class="io">
     <button class="btn btn-sm" id="export">ייצוא</button>
-    <label class="btn btn-sm">ייבוא<input type="file" id="import" accept="application/json" hidden></label>
+    <button class="btn btn-sm" id="logout">יציאה</button>
   </div>
 </div></header>
 
@@ -61,12 +65,12 @@
     <form id="post-form" class="panel">
       <div class="row">
         <label>קמפיין <select name="campaign" id="post-campaign"></select></label>
-        <label>ערוץ <select name="channel"><option>Facebook</option><option>Instagram</option><option>TikTok</option><option>LinkedIn</option><option>Google</option><option>Email</option><option>WhatsApp</option><option>בלוג</option></select></label>
+        <label>ערוץ <select name="channel"><option>Facebook</option><option>Instagram</option><option>TikTok</option><option>LinkedIn</option><option>Google</option><option>Email</option><option>WhatsApp</option><option>Telegram</option><option>בלוג</option></select></label>
         <label>תאריך <input name="date" type="date" required></label>
         <label>שעה <input name="time" type="time" value="10:00"></label>
       </div>
       <label>טקסט / קריאייטיב <textarea name="text" rows="3" required></textarea></label>
-      <button class="btn btn-sm" type="submit">הוספה ללוח</button>
+      <div class="bar"><button class="btn btn-sm" type="submit">הוספה ללוח</button><button type="button" class="link" id="ai-text" hidden>✨ כתיבה עם AI</button></div>
     </form>
     <div id="post-list"></div>
   </section>
