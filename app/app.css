@@ -1,0 +1,32 @@
+.nav{flex-wrap:wrap;gap:8px}
+#tabs{display:flex;gap:4px;flex-wrap:wrap}
+#tabs button,.link{background:none;border:0;font:inherit;color:var(--fg);padding:8px 14px;border-radius:8px;cursor:pointer}
+#tabs button.active{background:var(--alt);color:var(--brand);font-weight:700}
+.io{display:flex;gap:8px}
+.app{padding:24px 0 64px}
+.tab{display:none}.tab.active{display:block}
+.bar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:12px 0}
+.app h2{text-align:start;margin:0;font-size:1.5rem}
+.panel{background:var(--alt);border-radius:14px;padding:18px;margin:12px 0;display:grid;gap:12px}
+.panel label{display:grid;gap:4px;font-size:.9rem;color:var(--muted)}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+fieldset{border:1px solid #8883;border-radius:10px}
+.chk{display:inline-flex!important;grid-auto-flow:column;align-items:center;gap:6px;margin-inline-end:14px}
+.chk input{width:auto}
+select{padding:10px;border:1px solid #8886;border-radius:10px;font:inherit;background:var(--bg);color:var(--fg)}
+.item{border:1px solid #8883;border-radius:12px;padding:14px;margin:10px 0;display:grid;gap:6px}
+.item h3{margin:0}.meta{color:var(--muted);font-size:.9rem}
+.tag{display:inline-block;background:var(--alt);color:var(--brand);border-radius:99px;padding:2px 10px;font-size:.8rem;margin-inline-end:6px}
+.item .acts{display:flex;gap:10px;flex-wrap:wrap}
+.acts button{background:var(--alt);border:0;border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer;color:var(--fg)}
+.acts .danger{color:#d33}
+.due{border-color:var(--brand2)}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:12px 0}
+.kpi{background:var(--alt);border-radius:14px;padding:16px;text-align:center}
+.kpi b{display:block;font-size:1.8rem;color:var(--brand)}
+.pipeline{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;align-items:start}
+.col{background:var(--alt);border-radius:12px;padding:10px;min-height:120px}
+.col h4{margin:0 0 8px}
+.lead{background:var(--bg);border-radius:10px;padding:10px;margin-bottom:8px;font-size:.9rem;display:grid;gap:4px}
+table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #8883;text-align:start}
+.bar-track{background:var(--alt);border-radius:99px;height:10px;overflow:hidden}.bar-fill{background:linear-gradient(90deg,var(--brand),var(--brand2));height:100%}

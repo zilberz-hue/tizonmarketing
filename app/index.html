@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>טיזון | מערכת שיווק ופרסום</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="header"><div class="container nav">
+  <a class="logo" href="../index.html">טיזון<span>שיווק</span></a>
+  <nav id="tabs">
+    <button data-tab="dash" class="active">סקירה</button>
+    <button data-tab="campaigns">קמפיינים</button>
+    <button data-tab="content">לוח תוכן</button>
+    <button data-tab="leads">לידים</button>
+    <button data-tab="reports">דוחות</button>
+  </nav>
+  <div class="io">
+    <button class="btn btn-sm" id="export">ייצוא</button>
+    <label class="btn btn-sm">ייבוא<input type="file" id="import" accept="application/json" hidden></label>
+  </div>
+</div></header>
+
+<main class="container app">
+  <section id="dash" class="tab active"></section>
+
+  <section id="campaigns" class="tab">
+    <div class="bar"><h2>קמפיינים</h2><button class="btn btn-sm" id="new-campaign">+ קמפיין חדש</button></div>
+    <form id="campaign-form" class="panel" hidden>
+      <h3>תכנון קמפיין – 6 שלבים</h3>
+      <label>1. שם הקמפיין <input name="name" required></label>
+      <label>2. יעד
+        <select name="goal"><option>לידים</option><option>מכירות</option><option>מודעות למותג</option><option>תנועה לאתר</option><option>שימור לקוחות</option></select></label>
+      <label>3. קהל יעד (גיל, אזור, תחומי עניין, בעיה שאתם פותרים) <textarea name="audience" rows="2"></textarea></label>
+      <fieldset><legend>4. ערוצים</legend>
+        <label class="chk"><input type="checkbox" name="ch" value="Google"> גוגל</label>
+        <label class="chk"><input type="checkbox" name="ch" value="Facebook"> פייסבוק</label>
+        <label class="chk"><input type="checkbox" name="ch" value="Instagram"> אינסטגרם</label>
+        <label class="chk"><input type="checkbox" name="ch" value="TikTok"> טיקטוק</label>
+        <label class="chk"><input type="checkbox" name="ch" value="LinkedIn"> לינקדאין</label>
+        <label class="chk"><input type="checkbox" name="ch" value="Email"> אימייל</label>
+        <label class="chk"><input type="checkbox" name="ch" value="WhatsApp"> וואטסאפ</label>
+        <label class="chk"><input type="checkbox" name="ch" value="SEO"> SEO</label>
+      </fieldset>
+      <div class="row">
+        <label>5. תקציב (₪) <input name="budget" type="number" min="0" value="0"></label>
+        <label>יעד לידים/מכירות <input name="target" type="number" min="0" value="0"></label>
+        <label>התחלה <input name="start" type="date"></label>
+        <label>סיום <input name="end" type="date"></label>
+      </div>
+      <label>6. מסר מרכזי והצעה <textarea name="message" rows="2"></textarea></label>
+      <div class="bar"><button class="btn btn-sm" type="submit">שמירה</button><button type="button" class="link" id="cancel-campaign">ביטול</button></div>
+    </form>
+    <div id="campaign-list"></div>
+  </section>
+
+  <section id="content" class="tab">
+    <div class="bar"><h2>לוח תוכן ותזמון</h2></div>
+    <form id="post-form" class="panel">
+      <div class="row">
+        <label>קמפיין <select name="campaign" id="post-campaign"></select></label>
+        <label>ערוץ <select name="channel"><option>Facebook</option><option>Instagram</option><option>TikTok</option><option>LinkedIn</option><option>Google</option><option>Email</option><option>WhatsApp</option><option>בלוג</option></select></label>
+        <label>תאריך <input name="date" type="date" required></label>
+        <label>שעה <input name="time" type="time" value="10:00"></label>
+      </div>
+      <label>טקסט / קריאייטיב <textarea name="text" rows="3" required></textarea></label>
+      <button class="btn btn-sm" type="submit">הוספה ללוח</button>
+    </form>
+    <div id="post-list"></div>
+  </section>
+
+  <section id="leads" class="tab">
+    <div class="bar"><h2>לידים</h2></div>
+    <form id="lead-form-app" class="panel">
+      <div class="row">
+        <label>שם <input name="name" required></label>
+        <label>טלפון <input name="phone" type="tel"></label>
+        <label>אימייל <input name="email" type="email"></label>
+        <label>קמפיין / מקור <select name="campaign" id="lead-campaign"></select></label>
+        <label>שווי עסקה (₪) <input name="value" type="number" min="0" value="0"></label>
+      </div>
+      <button class="btn btn-sm" type="submit">הוספת ליד</button>
+    </form>
+    <div id="pipeline" class="pipeline"></div>
+  </section>
+
+  <section id="reports" class="tab"></section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
