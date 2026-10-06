@@ -32,7 +32,7 @@
   <section id="dash" class="tab active"></section>
 
   <section id="campaigns" class="tab">
-    <div class="bar"><h2>קמפיינים</h2><button class="btn btn-sm" id="new-campaign">+ קמפיין חדש</button></div>
+    <div class="bar"><h2>קמפיינים</h2><span class="acts"><button class="btn btn-sm" data-act="quick-open">✨ קמפיין בדקה</button><button class="btn btn-sm btn-ghost" id="new-campaign">+ קמפיין ידני</button></span></div>
     <form id="campaign-form" class="panel" hidden>
       <h3>תכנון קמפיין – 6 שלבים</h3>
       <label>1. שם הקמפיין <input name="name" required></label>
@@ -93,6 +93,11 @@
 
   <section id="reports" class="tab"></section>
 </main>
+<dialog id="quick" class="quick" aria-labelledby="quick-title">
+  <form method="dialog" class="x"><button aria-label="סגירה">✕</button></form>
+  <div id="quick-body"></div>
+</dialog>
+<div id="toast" role="status" aria-live="polite" hidden></div>
 <script src="app.js"></script>
 </body>
 </html>

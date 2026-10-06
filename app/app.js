@@ -104,6 +104,8 @@ document.addEventListener('submit', safe(async e => {
 document.addEventListener('click', safe(async e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const { act, id } = b.dataset;
+  if (act === 'quick-open') return openQuick();
+  if (act === 'copy-link') { navigator.clipboard?.writeText(`${location.origin}/?c=${id}`); toast('הקישור הועתק. לידים שיגיעו דרכו ישויכו לקמפיין'); return; }
   if (act === 'copy') { navigator.clipboard?.writeText(db.posts.find(p => p.id === id).text); b.textContent = 'הועתק ✓'; return; }
   if (act === 'del-campaign' && confirm('למחוק את הקמפיין?')) await api('DELETE', '/campaigns/' + id);
   else if (act === 'spend') { const c = camp(id), v = prompt('כמה הוצאתם עד כה (₪)?', c.spent); if (v === null || isNaN(+v)) return; await api('PUT', '/campaigns/' + id, { spent: +v }); }
@@ -129,6 +131,113 @@ $('#export').onclick = () => {
   a.download = 'tizon-marketing-' + new Date().toISOString().slice(0, 10) + '.json';
   a.click(); URL.revokeObjectURL(a.href);
 };
+
+// ---------- Quick campaign ----------
+const ALL_CHANNELS = ['Facebook', 'Instagram', 'WhatsApp', 'TikTok', 'LinkedIn', 'Google', 'Email', 'Telegram'];
+const isAuto = ch => (ch === 'Facebook' && caps.facebook) || (ch === 'Telegram' && caps.telegram) || !!caps.webhook;
+const pad2 = n => String(n).padStart(2, '0');
+const ymd = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+let toastTimer;
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 4000);
+}
+
+function openQuick() {
+  $('#quick-body').innerHTML = `<h2 id="quick-title">✨ קמפיין בדקה</h2>
+    <p class="sub">כתבו במשפט אחד מה רוצים לקדם. המערכת תבנה קמפיין שלם, ואתם רק מאשרים.</p>
+    <form id="quick-form" class="panel">
+      <label>מה רוצים לקדם? <textarea name="idea" rows="3" required placeholder="למשל: ייעוץ בריאות אישי, שיחת היכרות חינם"></textarea></label>
+      <fieldset class="chips"><legend>איפה לפרסם? ⚡ = מתפרסם אוטומטית</legend>
+        ${ALL_CHANNELS.map((c, i) => `<label class="chip"><input type="checkbox" name="ch" value="${c}" ${i === 0 ? 'checked' : ''}><span>${c}${isAuto(c) ? ' ⚡' : ''}</span></label>`).join('')}
+      </fieldset>
+      <label>לכמה זמן? <select name="days"><option value="7">שבוע</option><option value="14">שבועיים</option><option value="30">חודש</option></select></label>
+      <button class="btn" type="submit">✨ צרו לי קמפיין</button>
+      ${caps.ai ? '' : '<p class="meta">מצב בסיסי: תבניות מוכנות. חיבור ANTHROPIC_API_KEY יוסיף כתיבה חכמה.</p>'}
+    </form>`;
+  $('#quick').showModal();
+  $('#quick-form [name=idea]').focus();
+}
+
+$('#quick-body').addEventListener('submit', safe(async e => {
+  if (e.target.id === 'quick-form') {
+    e.preventDefault();
+    const f = new FormData(e.target), btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = 'בונה את הקמפיין…';
+    try {
+      const r = await api('POST', '/ai/quick-campaign', { idea: f.get('idea'), channels: f.getAll('ch'), days: +f.get('days') });
+      renderQuickPreview(r.draft, +f.get('days'));
+    } finally { btn.disabled = false; btn.textContent = '✨ צרו לי קמפיין'; }
+  } else if (e.target.id === 'quick-launch') {
+    e.preventDefault();
+    await launchQuick(e.target, e.submitter?.value === 'draft');
+  }
+}));
+
+function renderQuickPreview(d, days) {
+  const start = new Date(); start.setDate(start.getDate() + 1);
+  const dateFor = day => { const x = new Date(start); x.setDate(x.getDate() + day); return ymd(x); };
+  $('#quick-body').innerHTML = `<h2 id="quick-title">הקמפיין מוכן – עברו ושגרו</h2>
+    <p class="sub">אפשר לערוך כל דבר. פוסטים שלא מסומנים לא ייכנסו.</p>
+    <form id="quick-launch">
+      <div class="panel">
+        <label>שם הקמפיין <input name="name" value="${esc(d.name)}" required></label>
+        <div class="row">
+          <label>יעד <select name="goal">${['לידים', 'מכירות', 'מודעות למותג', 'תנועה לאתר', 'שימור לקוחות'].map(g => `<option ${g === d.goal ? 'selected' : ''}>${g}</option>`).join('')}</select></label>
+          <label>תקציב (₪, אופציונלי) <input name="budget" type="number" min="0" value="0"></label>
+        </div>
+        <label>קהל יעד <textarea name="audience" rows="2">${esc(d.audience)}</textarea></label>
+        <label>מסר מרכזי <input name="message" value="${esc(d.message)}"></label>
+      </div>
+      <h3>לוח התוכן (${d.posts.length} פוסטים)</h3>
+      ${d.posts.map((p, i) => `<div class="qpost" data-i="${i}">
+        <div class="qhead">
+          <label class="chip"><input type="checkbox" class="inc" checked><span>כלול</span></label>
+          <input type="date" class="pdate" value="${dateFor(p.day)}" required aria-label="תאריך">
+          <input type="time" class="ptime" value="10:00" required aria-label="שעה">
+          <select class="pch" aria-label="ערוץ">${ALL_CHANNELS.map(c => `<option ${c === p.channel ? 'selected' : ''}>${c}</option>`).join('')}</select>
+          <span class="badge ${isAuto(p.channel) ? 'auto' : ''}">${isAuto(p.channel) ? '⚡ אוטומטי' : 'ידני: תקבלו תזכורת'}</span>
+        </div>
+        <textarea class="ptext" rows="3" aria-label="טקסט הפוסט">${esc(p.text)}</textarea>
+      </div>`).join('')}
+      <div class="qfoot">
+        <button class="btn" type="submit" value="launch">🚀 שגרו את הקמפיין</button>
+        <button class="btn btn-ghost" type="submit" value="draft">שמרו כטיוטות</button>
+        <button type="button" class="link" id="quick-back">חזרה</button>
+      </div>
+    </form>`;
+}
+
+$('#quick-body').addEventListener('click', e => {
+  if (e.target.id === 'quick-back') openQuick();
+});
+$('#quick-body').addEventListener('change', e => {
+  const post = e.target.closest('.qpost'); if (!post) return;
+  if (e.target.classList.contains('inc')) post.classList.toggle('off', !e.target.checked);
+  if (e.target.classList.contains('pch')) {
+    const b = post.querySelector('.badge'), auto = isAuto(e.target.value);
+    b.className = 'badge' + (auto ? ' auto' : ''); b.textContent = auto ? '⚡ אוטומטי' : 'ידני: תקבלו תזכורת';
+  }
+});
+
+async function launchQuick(form, asDraft) {
+  const f = new FormData(form);
+  const posts = [...form.querySelectorAll('.qpost')].filter(el => el.querySelector('.inc').checked).map(el => ({
+    channel: el.querySelector('.pch').value, text: el.querySelector('.ptext').value.trim(),
+    at: new Date(`${el.querySelector('.pdate').value}T${el.querySelector('.ptime').value}`)
+  })).filter(p => p.text && !isNaN(p.at));
+  if (!posts.length) throw new Error('סמנו לפחות פוסט אחד');
+  const dates = posts.map(p => p.at).sort((a, b) => a - b);
+  const camp = await api('POST', '/campaigns', {
+    name: f.get('name'), goal: f.get('goal'), audience: f.get('audience'), message: f.get('message'), budget: +f.get('budget') || 0,
+    channels: [...new Set(posts.map(p => p.channel))], start: ymd(dates[0]), end: ymd(dates[dates.length - 1])
+  });
+  await Promise.all(posts.map(p => api('POST', '/posts', { campaign: camp.id, channel: p.channel, text: p.text, at: p.at.toISOString(), status: asDraft ? 'טיוטה' : 'מתוזמן' })));
+  $('#quick').close();
+  await refresh();
+  document.querySelector('[data-tab=content]').click();
+  toast(asDraft ? `נשמרו ${posts.length} טיוטות` : `הקמפיין שוגר: ${posts.length} פוסטים מתוזמנים 🚀`);
+}
 
 function render() {
   const opts = '<option value="">ללא קמפיין</option>' + db.campaigns.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
@@ -164,6 +273,7 @@ function renderCampaigns() {
       <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
       <div class="acts">
         <button data-act="ai-plan" data-id="${c.id}">✨ תכנון תוכן אוטומטי</button>
+        <button data-act="copy-link" data-id="${c.id}">🔗 קישור מעקב</button>
         <button data-act="spend" data-id="${c.id}">עדכון הוצאה</button>
         <button data-act="toggle-campaign" data-id="${c.id}">${c.status === 'פעיל' ? 'סיום' : 'הפעלה מחדש'}</button>
         <button class="danger" data-act="del-campaign" data-id="${c.id}">מחיקה</button>
@@ -216,7 +326,7 @@ function renderDash() {
   const t = totals();
   const due = db.posts.filter(p => ['ידני','נכשל'].includes(p.status));
   const stale = db.leads.filter(l => l.stage === 'חדש' && (Date.now() - new Date(l.created)) > 2 * 864e5);
-  $('#dash').innerHTML = `<h2>סקירה</h2>
+  $('#dash').innerHTML = `<div class="bar"><h2>סקירה</h2><button class="btn" data-act="quick-open">✨ קמפיין בדקה</button></div>
     <div class="kpis">
       <div class="kpi"><b>${db.campaigns.filter(c => c.status === 'פעיל').length}</b>קמפיינים פעילים</div>
       <div class="kpi"><b>${t.leads}</b>לידים</div>

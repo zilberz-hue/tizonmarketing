@@ -15,13 +15,18 @@ document.querySelectorAll('[data-count]').forEach(el => {
   }).observe(el);
 });
 
+// Campaign tracking link: /?c=<campaignId> attributes the lead to that campaign.
+const CAMPAIGN_KEY = 'tz-campaign';
+try { const c = new URLSearchParams(location.search).get('c'); if (c) sessionStorage.setItem(CAMPAIGN_KEY, c); } catch {}
+const trackedCampaign = () => { try { return sessionStorage.getItem(CAMPAIGN_KEY) || ''; } catch { return ''; } };
+
 document.getElementById('lead-form').addEventListener('submit', async e => {
   e.preventDefault();
   const status = document.getElementById('form-status');
   try {
     const r = await fetch('/api/public/lead', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(Object.fromEntries(new FormData(e.target)))
+      body: JSON.stringify({ ...Object.fromEntries(new FormData(e.target)), campaign: trackedCampaign() })
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.error || 'שגיאה');

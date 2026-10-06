@@ -51,6 +51,22 @@ assert.equal((await fetch(base + '/server/server.js')).status, 404, 'server sour
 assert.equal((await fetch(base + '/app/index.html')).status, 200);
 assert.equal((await fetch(base + '/%2e%2e/package.json')).status, 404);
 
+
+// quick campaign (no AI key configured -> built-in template cadence)
+const qc = await call('POST', '/api/ai/quick-campaign', { idea: 'ייעוץ בריאות אישי לגיל 50+', channels: ['Instagram', 'Nope'], days: 7 });
+assert.equal(qc.status, 200);
+assert.equal(qc.data.ai, false);
+assert.ok(qc.data.draft.posts.length >= 5 && qc.data.draft.posts.every(p => p.channel === 'Instagram' && p.day >= 0 && p.day <= 6));
+assert.equal((await call('POST', '/api/ai/quick-campaign', { idea: 'x' })).status, 400);
+
+// tracking link: lead attributed to an existing campaign, bogus ids ignored
+const pub = body => fetch(base + '/api/public/lead', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+await pub({ name: 'עוקב', phone: '051', campaign: c.id });
+await pub({ name: 'זר', phone: '052', campaign: 'does-not-exist' });
+const leadsNow = (await call('GET', '/api/state')).data.leads;
+assert.equal(leadsNow.find(l => l.name === 'עוקב').campaign, c.id);
+assert.equal(leadsNow.find(l => l.name === 'זר').campaign, '');
+
 const del = await call('DELETE', '/api/posts/' + p.id);
 assert.equal(del.status, 200);
 console.log('all tests passed');
