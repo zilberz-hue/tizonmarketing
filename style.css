@@ -30,3 +30,7 @@ input,textarea{width:100%;padding:12px 14px;border:1px solid #8886;border-radius
 #form-status{margin:0;text-align:center;color:var(--brand)}
 .footer{text-align:center;padding:28px 16px;color:var(--muted)}
 @media (max-width:600px){.nav nav a:not(.btn){display:none}}
+.cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.btn-outline{background:none;border:2px solid var(--brand);color:var(--brand)!important}
+.lead{text-align:center;color:var(--muted);margin:-20px 0 24px}
+.lead a,.footer a{color:var(--brand)}
