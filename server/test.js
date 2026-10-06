@@ -28,7 +28,8 @@ const mock2 = http.createServer((req, res) => {
     if (req.url === '/anthropic-bad') { res.statusCode = 401; return res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } })); }
     if (req.url === '/anthropic') {
       const prompt = body.messages?.[0]?.content || '';
-      const text = prompt.includes('"posts"') ? JSON.stringify({ name: 'קמפיין AI', goal: 'מכירות', audience: 'קהל', message: 'מסר', posts: [{ day: 0, channel: 'Facebook', text: 'פוסט א' }, { day: 3, channel: 'Nope', text: 'פוסט ב' }] })
+      const text = prompt.includes('ההנחיה של המשתמש') ? (prompt.includes('כתוב שזה מרפא') ? 'המוצר מרפא הכול' : 'טקסט משודרג')
+        : prompt.includes('"posts"') ? JSON.stringify({ name: 'קמפיין AI', goal: 'מכירות', audience: 'קהל', message: 'מסר', posts: [{ day: 0, channel: 'Facebook', text: 'פוסט א' }, { day: 3, channel: 'Nope', text: 'פוסט ב' }] })
         : prompt.includes('תובנות') ? '- להגדיל את הקמפיין הטוב\n- לעצור את החלש' : 'שלום';
       return res.end(JSON.stringify({ content: [{ type: 'text', text }] }));
     }
@@ -357,6 +358,19 @@ assert.equal(leadsNow.find(l => l.name === 'זר').campaign, '');
   await call('PUT', '/api/campaigns/' + c3.id, { status: 'פעיל' });
   await tick();
   assert.equal((await call('GET', '/api/state')).data.posts.find(p => p.id === pp.id).status, 'פורסם');
+}
+
+// AI improve: any text field + a one-line instruction; the result is compliance-checked
+{
+  const imp = await call('POST', '/api/ai/improve', { text: 'פוסט ישן', instruction: 'קצר יותר', label: 'טקסט הפוסט', channel: 'Facebook' });
+  assert.equal(imp.status, 200); assert.equal(imp.data.text, 'טקסט משודרג'); assert.equal(imp.data.risk.level, '');
+  const prompts = mock2log.filter(r => r.path === '/anthropic').map(r => r.body.messages[0].content);
+  const last = prompts[prompts.length - 1];
+  assert.ok(last.includes('פוסט ישן') && last.includes('קצר יותר') && last.includes('טקסט הפוסט') && last.includes('Facebook'), 'prompt carries text, instruction, field and channel');
+  const risky2 = await call('POST', '/api/ai/improve', { text: 'x', instruction: 'כתוב שזה מרפא' });
+  assert.equal(risky2.data.risk.level, 'high', 'an AI rewrite that makes medical claims is flagged');
+  assert.equal((await call('POST', '/api/ai/improve', { text: '', instruction: 'כתוב ברכה קצרה' })).status, 200, 'works from an empty field');
+  assert.equal((await call('POST', '/api/ai/improve', { text: '', instruction: '' })).status, 400);
 }
 
 // work-plan checklist: shared, validated, returned in /state
