@@ -61,3 +61,17 @@ table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px so
 .acts button.btn{background:linear-gradient(90deg,var(--brand),var(--brand2));color:var(--on-brand)}
 .acts button.btn-ghost{background:none;color:var(--brand)}
 input[dir=ltr],textarea[dir=ltr]{text-align:left}
+.bar-track.big{height:14px;margin:8px 0 14px}
+.plan-next{border:2px solid var(--brand);background:var(--bg)}.plan-next p{margin:6px 0}
+.phase{border:1px solid #8883;border-radius:14px;padding:4px 14px;margin:10px 0}
+.phase>summary{display:flex;justify-content:space-between;align-items:center;gap:10px;cursor:pointer;font-weight:700;padding:10px 0;list-style:none}
+.phase>summary::-webkit-details-marker{display:none}
+.tasks{list-style:none;margin:0;padding:0}
+.task{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:10px 0;border-top:1px solid #8882}
+.task label{display:flex;gap:10px;align-items:flex-start;cursor:pointer;flex:1}
+.task input{width:20px;height:20px;margin-top:3px;flex:none;accent-color:var(--brand2)}
+.task.done b{text-decoration:line-through;color:var(--muted)}
+.why{display:block;font-size:.88rem;margin-top:2px}
+.guide{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;padding-bottom:12px}
+.guide .card h3{font-size:1rem}.guide .card p{font-size:.92rem;line-height:1.55}
+@media (max-width:600px){.task{flex-direction:column}}

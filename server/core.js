@@ -319,8 +319,9 @@ export function createApp(store) {
     }
     if (parts[0] === 'me') return send(res, 200, user);
     if (parts[0] === 'state') {
-      const [campaigns, posts, leads] = await Promise.all(['campaigns', 'posts', 'leads'].map(k => store.list(k)));
-      return send(res, 200, { me: user, campaigns, posts, leads, caps: { ...connectors(), ai: !!env('ANTHROPIC_API_KEY') } });
+      const [[campaigns, posts, leads], checklist] = await Promise.all([
+        Promise.all(['campaigns', 'posts', 'leads'].map(k => store.list(k))), store.get('checklist', 'main')]);
+      return send(res, 200, { me: user, campaigns, posts, leads, checklist: checklist?.done || {}, caps: { ...connectors(), ai: !!env('ANTHROPIC_API_KEY') } });
     }
 
     if (parts[0] === 'users') {
@@ -333,6 +334,18 @@ export function createApp(store) {
         catch (e) { throw e.code === 'EXISTS' ? httpErr(409, 'המשתמש כבר קיים') : e; }
         return send(res, 201, { ok: true });
       }
+    }
+
+    if (parts[0] === 'checklist' && method === 'POST') {
+      const { key, done } = await readBody(req);
+      if (!/^[a-z0-9@:_.-]{1,60}$/i.test(String(key || ''))) throw httpErr(400, 'מפתח לא תקין');
+      const d = { ...((await store.get('checklist', 'main'))?.done || {}) };
+      if (done) {
+        if (Object.keys(d).length >= 500 && !(key in d)) throw httpErr(400, 'יותר מדי פריטים');
+        d[key] = new Date().toISOString();
+      } else delete d[key];
+      await store.put('checklist', 'main', { done: d });
+      return send(res, 200, { done: d });
     }
 
     if (parts[0] === 'settings') {

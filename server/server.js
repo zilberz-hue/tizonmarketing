@@ -25,7 +25,7 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=
 function serveStatic(req, res, url) {
   let p = decodeURIComponent(url.pathname);
   if (p.endsWith('/')) p += 'index.html';
-  const ok = /^\/(index\.html|style\.css|script\.js|assets\/(logo\.webp|favicon\.png)|app\/(index\.html|app\.css|app\.js))$/.test(p);
+  const ok = /^\/(index\.html|style\.css|script\.js|assets\/(logo\.webp|favicon\.png)|app\/(index\.html|app\.css|app\.js|plan\.js))$/.test(p);
   if (!ok) { res.writeHead(404); return res.end('Not found'); }
   const file = path.join(ROOT, p);
   fs.readFile(file, (err, buf) => {
