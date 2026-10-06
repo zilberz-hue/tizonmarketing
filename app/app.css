@@ -36,3 +36,21 @@ table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px so
 .eye{position:absolute;inset-inline-end:6px;top:50%;transform:translateY(-50%);display:grid;place-items:center;width:34px;height:34px;border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer}
 .eye:hover,.eye:focus-visible{color:var(--brand);background:var(--alt)}
 .eye .i-hide{display:none}.eye[aria-pressed=true] .i-hide{display:block}.eye[aria-pressed=true] .i-show{display:none}
+.btn-ghost{background:none;border:2px solid var(--brand);color:var(--brand)!important}
+.quick{border:0;border-radius:18px;padding:22px;width:min(760px,94vw);max-height:92vh;overflow:auto;background:var(--bg);color:var(--fg);box-shadow:0 20px 60px #0006}
+.quick::backdrop{background:#0008}
+.quick .x{position:absolute;inset-inline-start:12px;top:10px}.quick .x button{background:none;border:0;font-size:1.2rem;cursor:pointer;color:var(--muted)}
+.quick h2{margin:0 0 4px}.quick .sub{color:var(--muted);margin:0 0 14px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;border:0;padding:0;margin:0}
+.chips legend{padding:0;margin-bottom:6px;font-size:.9rem;color:var(--muted)}
+.chip{position:relative}.chip input{position:absolute;opacity:0;inset:0;cursor:pointer;width:100%;height:100%}
+.chip span{display:inline-block;padding:7px 14px;border:2px solid #8886;border-radius:99px;font-size:.9rem}
+.chip input:checked+span{border-color:var(--brand);background:var(--alt);color:var(--brand);font-weight:700}
+.chip input:focus-visible+span{outline:2px solid var(--brand2);outline-offset:2px}
+.qpost{border:1px solid #8883;border-radius:12px;padding:10px;margin:8px 0;display:grid;gap:8px}
+.qpost.off{opacity:.45}
+.qhead{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.qhead input[type=date],.qhead input[type=time],.qhead select{width:auto;padding:6px 8px}
+.badge{font-size:.78rem;padding:2px 9px;border-radius:99px;background:var(--alt);color:var(--muted)}.badge.auto{background:#5f8f0822;color:var(--brand2);font-weight:700}
+.qfoot{position:sticky;bottom:-22px;background:var(--bg);padding:12px 0 4px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+#toast{position:fixed;bottom:22px;inset-inline:0;margin-inline:auto;width:max-content;max-width:90vw;background:var(--fg);color:var(--bg);padding:12px 20px;border-radius:99px;z-index:100;box-shadow:0 6px 24px #0005}

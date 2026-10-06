@@ -111,6 +111,41 @@ async function claude(prompt, max = 1500) {
 }
 const brief = c => c ? `קמפיין: ${c.name}\nיעד: ${c.goal}\nקהל: ${c.audience}\nמסר: ${c.message}\nערוצים: ${(c.channels || []).join(', ')}` : '';
 
+
+const CHANNELS = ['Facebook', 'Instagram', 'TikTok', 'LinkedIn', 'Google', 'Email', 'WhatsApp', 'Telegram'];
+const GOALS = ['לידים', 'מכירות', 'מודעות למותג', 'תנועה לאתר', 'שימור לקוחות'];
+const clamp = (n, lo, hi) => Math.min(Math.max(n, lo), hi);
+
+// Used when no AI key is configured: a sensible 5-step cadence built from the user's own sentence.
+function fallbackDraft(idea, channels, days) {
+  const steps = [
+    t => `${t}\n\nרוצים לשמוע עוד? השאירו פרטים ונחזור אליכם.`,
+    t => `שאלה קטנה: מה הכי חשוב לכם בנושא הזה?\n${t}\nכתבו לנו בתגובה או בהודעה.`,
+    t => `למה זה מתאים לכם? ${t}\nנשמח להסביר ולהתאים אישית.`,
+    t => `שאלות ותשובות: יש לכם שאלה על ${t}? אנחנו כאן לענות.`,
+    t => `הזדמנות אחרונה: ${t}\nצרו קשר עוד היום.`
+  ];
+  const n = Math.min(days, steps.length * 2);
+  return {
+    name: idea.slice(0, 40), goal: 'לידים', audience: '', message: idea,
+    posts: Array.from({ length: n }, (_, i) => ({
+      day: Math.floor(i * days / n), channel: channels[i % channels.length], text: steps[i % steps.length](idea)
+    }))
+  };
+}
+function cleanDraft(d, channels, days) {
+  const ch = c => (CHANNELS.includes(c) ? c : channels[0]);
+  return {
+    name: String(d.name || '').slice(0, 80) || 'קמפיין חדש',
+    goal: GOALS.includes(d.goal) ? d.goal : 'לידים',
+    audience: String(d.audience || '').slice(0, 600),
+    message: String(d.message || '').slice(0, 400),
+    posts: (Array.isArray(d.posts) ? d.posts : []).slice(0, 14).map(p => ({
+      day: clamp(Math.round(+p.day || 0), 0, days - 1), channel: ch(p.channel), text: String(p.text || '').slice(0, 1500)
+    })).filter(p => p.text.trim())
+  };
+}
+
 /**
  * store: {
  *   userCount(), getUser(email), listUsers(), addUser(email,name,hash,role) // throws {code:'EXISTS'}
@@ -180,7 +215,9 @@ export function createApp(store) {
       const b = await readBody(req);
       if (b.website) return send(res, 200, { ok: true }, cors); // honeypot
       if (!String(b.name || '').trim() || !(String(b.phone || '').trim() || String(b.email || '').trim())) throw httpErr(400, 'נא למלא שם וטלפון או אימייל');
-      const lead = await store.put('leads', uid(), pick('leads', { name: b.name, phone: b.phone, email: b.email, note: b.message }, { created: new Date().toISOString().slice(0, 10), stage: 'חדש', value: 0 }));
+      const cid = String(b.campaign || '').slice(0, 40);
+      const attributed = cid && await store.get('campaigns', cid) ? cid : '';
+      const lead = await store.put('leads', uid(), pick('leads', { name: b.name, phone: b.phone, email: b.email, note: b.message, campaign: attributed }, { created: new Date().toISOString().slice(0, 10), stage: 'חדש', value: 0 }));
       await notify(`🆕 ליד חדש מהאתר: ${lead.name} ${lead.phone} ${lead.email}\n${lead.note || ''}`, 'lead.created', { lead });
       return send(res, 200, { ok: true }, cors);
     }
@@ -228,6 +265,24 @@ export function createApp(store) {
       if (parts[1] === 'generate') {
         const text = await claude(`אתה קופירייטר שיווקי בעברית. כתוב פוסט אחד לערוץ ${String(b.channel).slice(0, 30)} בלבד, בלי הקדמות ובלי הסברים.\n${brief(c)}\nהנחיה נוספת: ${String(b.brief || '').slice(0, 500)}`, 700);
         return send(res, 200, { text });
+      }
+      if (parts[1] === 'quick-campaign') {
+        const idea = String(b.idea || '').trim().slice(0, 600);
+        if (idea.length < 3) throw httpErr(400, 'ספרו במשפט אחד מה רוצים לקדם');
+        const days = clamp(Math.round(+b.days || 7), 1, 30);
+        const channels = (Array.isArray(b.channels) ? b.channels : []).filter(x => CHANNELS.includes(x)).slice(0, 6);
+        if (!channels.length) channels.push('Facebook');
+        if (!env('ANTHROPIC_API_KEY')) return send(res, 200, { ai: false, draft: cleanDraft(fallbackDraft(idea, channels, days), channels, days) });
+        const n = Math.min(days, 10);
+        const raw = await claude(`אתה אסטרטג שיווק ישראלי. בנה קמפיין שלם בעברית לפי הרעיון.
+חוקים: בלי הבטחות רפואיות או טענות ריפוי, בלי "לפני/אחרי", בלי מספרים או עובדות שלא ניתנו, קריאה אחת לפעולה בכל פוסט, טקסט קצר וברור, אימוג'י במידה.
+${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0, 500) + '\n' : ''}החזר JSON תקין בלבד, בלי הסברים: {"name":"שם קצר","goal":"אחד מ: ${GOALS.join(', ')}","audience":"תיאור קהל היעד","message":"המסר המרכזי בשורה אחת","posts":[{"day":0,"channel":"אחד מ: ${channels.join(', ')}","text":"..."}]}
+עד ${n} פוסטים לאורך ${days} ימים (day מ-0 עד ${days - 1}), מפוזרים בין הערוצים.
+הרעיון: ${idea}`, 3500);
+        let d; try { d = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); } catch { throw httpErr(502, 'ה-AI החזיר תשובה לא תקינה, נסו שוב'); }
+        const draft = cleanDraft(d, channels, days);
+        if (!draft.posts.length) throw httpErr(502, 'ה-AI לא החזיר פוסטים, נסו שוב');
+        return send(res, 200, { ai: true, draft });
       }
       if (parts[1] === 'plan') {
         if (!c) throw httpErr(404, 'קמפיין לא נמצא');
