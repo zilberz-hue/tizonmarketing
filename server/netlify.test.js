@@ -77,6 +77,46 @@ const ws = (await call('POST', '/workspaces', { name: 'לקוח' })).data;
 const cInWs = (await call('POST', '/campaigns', { name: 'בלקוח' }, { 'x-workspace': ws.id })).data;
 assert.ok(!(await call('GET', '/state')).data.campaigns.some(x => x.id === cInWs.id));
 assert.deepEqual((await call('GET', '/state', undefined, { 'x-workspace': ws.id })).data.campaigns.map(x => x.id), [cInWs.id]);
+
+// Background AI jobs (Netlify): the API answers { job } at once, the background function finishes it, the client polls
+{
+  const aiMock = http.createServer((req, res) => {
+    let b = ''; req.on('data', c => b += c);
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      if (req.url === '/bad') { res.statusCode = 529; return res.end('{"error":"overloaded"}'); }
+      const draft = { name: 'מרקע', goal: 'לידים', audience: 'קהל', message: 'מסר', posts: [{ day: 0, channel: 'Facebook', text: 'פוסט מהרקע' }] };
+      res.end(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify(draft) }] }));
+    });
+  });
+  await new Promise(r => aiMock.listen(0, r));
+  process.env.ANTHROPIC_API_KEY = 'sk-test'; process.env.ANTHROPIC_API_URL = `http://127.0.0.1:${aiMock.address().port}/ok`;
+  const started = [];
+  let jobApp;
+  jobApp = createApp(blobsStore(fakeBlobs), { startJob: async id => { started.push(id); setTimeout(() => jobApp.runJob(id), 30); } });
+  const jh = makeHandler(jobApp);
+  const jcall = async (method, path, body) => {
+    const r = await jh(new Request('https://site.test/api' + path, { method, body: body && JSON.stringify(body),
+      headers: { 'content-type': 'application/json', 'x-requested-with': 'tizon', authorization: 'Bearer ' + token } }), { ip: '1.2.3.4' });
+    return { status: r.status, data: await r.json().catch(() => null) };
+  };
+  const q = await jcall('POST', '/ai/quick-campaign', { idea: 'רעיון כלשהו', channels: ['Facebook'], days: 7 });
+  assert.equal(q.status, 200); assert.ok(q.data.job, 'answers with a job id instead of waiting for the AI');
+  assert.equal(started.length, 1);
+  let job; for (let i = 0; i < 50; i++) { job = (await jcall('GET', '/jobs/' + q.data.job)).data; if (job.status === 'done' || job.status === 'error') break; await new Promise(r => setTimeout(r, 40)); }
+  assert.equal(job.status, 'done'); assert.equal(job.result.draft.posts[0].text, 'פוסט מהרקע'); assert.equal(job.result.ai, true);
+  assert.equal((await jcall('GET', '/jobs/' + 'f'.repeat(24))).status, 404);
+  // a failing AI service is reported through the job, with the reason
+  process.env.ANTHROPIC_API_URL = `http://127.0.0.1:${aiMock.address().port}/bad`;
+  const bq = await jcall('POST', '/ai/quick-campaign', { idea: 'רעיון כלשהו', channels: ['Facebook'], days: 7 });
+  let bj; for (let i = 0; i < 50; i++) { bj = (await jcall('GET', '/jobs/' + bq.data.job)).data; if (bj.status === 'done' || bj.status === 'error') break; await new Promise(r => setTimeout(r, 40)); }
+  assert.equal(bj.status, 'error'); assert.match(bj.error, /529/);
+  // without an AI key nothing is queued: the instant template path answers inline
+  delete process.env.ANTHROPIC_API_KEY;
+  const inline = await jcall('POST', '/ai/quick-campaign', { idea: 'רעיון כלשהו', channels: ['Facebook'], days: 7 });
+  assert.equal(inline.data.ai, false); assert.ok(!inline.data.job);
+  delete process.env.ANTHROPIC_API_URL; aiMock.close();
+}
 assert.equal((await call('POST', '/logout')).status, 200);
 assert.equal((await call('GET', '/state')).status, 401);
 
