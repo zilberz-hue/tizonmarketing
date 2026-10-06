@@ -57,6 +57,13 @@ assert.equal((await call('POST', '/users', { email: 'x@y.co', name: 'X', passwor
 assert.equal((await call('POST', '/users', { email: 'x@y.co', name: 'X', password: 'longenough1' })).status, 409);
 assert.equal((await call('PUT', '/leads/' + state.leads[0].id, { stage: 'נסגר' })).data.stage, 'נסגר');
 assert.equal((await call('DELETE', '/posts/' + p.id)).status, 200);
+
+// Settings persist through the Blobs store and hide secrets
+assert.equal((await call('PUT', '/settings', { values: { TG_BOT_TOKEN: '123:SECRETXYZ', TG_CHAT_ID: '-100555', BUSINESS_PROFILE: 'פרופיל' } })).status, 200);
+const st = (await call('GET', '/settings')).data;
+assert.ok(!JSON.stringify(st).includes('SECRETXYZ'));
+assert.equal(st.groups.find(g => g.id === 'telegram').connected, true);
+assert.equal((await call('GET', '/state')).data.caps.telegram, true);
 assert.equal((await call('POST', '/logout')).status, 200);
 assert.equal((await call('GET', '/state')).status, 401);
 

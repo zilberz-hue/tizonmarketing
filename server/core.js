@@ -2,8 +2,8 @@
 // Firestore store in functions/index.js), so the same code runs on the self-hosted Node
 // server and on Firebase Cloud Functions behind Netlify.
 import crypto from 'node:crypto';
-
-const env = k => process.env[k] || '';
+import { env, loadSettings, saveSettings, describeSettings, getMeta, setMeta } from './config.js';
+import { computeStats, ruleInsights, insightsPrompt, parseBullets } from './insights.js';
 
 const SCHEMA = {
   campaigns: { name: 's', goal: 's', audience: 's', channels: 'a', budget: 'n', target: 'n', start: 's', end: 's', message: 's', spent: 'n', status: 's' },
@@ -77,8 +77,64 @@ async function postJson(url, body, headers = {}) {
 const connectors = () => ({
   facebook: !!(env('FB_PAGE_ID') && env('FB_PAGE_TOKEN')),
   telegram: !!(env('TG_BOT_TOKEN') && env('TG_CHAT_ID')),
-  webhook: !!env('PUBLISH_WEBHOOK_URL')
+  webhook: !!env('PUBLISH_WEBHOOK_URL'),
+  email: !!(env('RESEND_API_KEY') && env('EMAIL_FROM'))
 });
+
+async function getJson(url) {
+  const r = await fetch(url, { signal: timeout() });
+  if (!r.ok) throw new Error(`${new URL(url).hostname} ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return r.json();
+}
+async function sendEmail(to, subject, text) {
+  if (!connectors().email) throw new Error('האימייל לא מוגדר');
+  return postJson(env('RESEND_API_URL') || 'https://api.resend.com/emails', { from: env('EMAIL_FROM'), to: [to], subject, text }, { authorization: 'Bearer ' + env('RESEND_API_KEY') });
+}
+// Israeli-friendly click-to-chat link from a phone number.
+function waLink(phone) {
+  let d = String(phone || '').replace(/\D/g, '');
+  if (d.startsWith('0')) d = '972' + d.slice(1);
+  return d.length >= 9 && d.length <= 15 ? `https://wa.me/${d}` : '';
+}
+const oneLine = s => String(s || '').replace(/[\r\n]+/g, ' ').slice(0, 120);
+
+async function onNewLead(lead) {
+  const wa = waLink(lead.phone);
+  const details = `${lead.name} ${lead.phone} ${lead.email}\n${lead.note || ''}`.trim();
+  await notify(`🆕 ליד חדש מהאתר: ${details}${wa ? `\n💬 ${wa}` : ''}`, 'lead.created', { lead });
+  if (connectors().email && env('OWNER_EMAIL')) await sendEmail(env('OWNER_EMAIL'), `ליד חדש: ${oneLine(lead.name)}`, `${details}${wa ? `\n\nוואטסאפ: ${wa}` : ''}`).catch(e => console.error('owner email:', e.message));
+  if (env('AUTO_REPLY') === 'on' && connectors().email && lead.email) {
+    const body = env('AUTO_REPLY_TEXT') || `שלום ${oneLine(lead.name)},\nתודה שפניתם אלינו! קיבלנו את הפרטים ונחזור אליכם בהקדם.`;
+    await sendEmail(lead.email, 'קיבלנו את פנייתכם', body).catch(e => console.error('auto reply:', e.message));
+  }
+}
+
+// "Test connection" buttons in Settings: a harmless real call per integration.
+async function testService(name) {
+  const c = connectors();
+  if (name === 'ai') return `המודל ענה: ${await claude('כתוב את המילה "שלום" בלבד.', 20)}`;
+  if (name === 'facebook') {
+    if (!c.facebook) throw new Error('חסר Page ID או טוקן');
+    const r = await getJson(`https://graph.facebook.com/v19.0/${encodeURIComponent(env('FB_PAGE_ID'))}?fields=name&access_token=${encodeURIComponent(env('FB_PAGE_TOKEN'))}`);
+    return `מחובר לדף: ${r.name}`;
+  }
+  if (name === 'telegram') {
+    if (!c.telegram) throw new Error('חסר טוקן או Chat ID');
+    await postJson(`https://api.telegram.org/bot${env('TG_BOT_TOKEN')}/sendMessage`, { chat_id: env('TG_CHAT_ID'), text: '✅ החיבור לטלגרם תקין' });
+    return 'נשלחה הודעת בדיקה לטלגרם';
+  }
+  if (name === 'webhook') {
+    if (!c.webhook) throw new Error('חסרה כתובת Webhook');
+    await postJson(env('PUBLISH_WEBHOOK_URL'), { event: 'test', text: 'חיבור תקין' });
+    return 'נשלחה בקשת בדיקה ל-Webhook';
+  }
+  if (name === 'email') {
+    if (!env('OWNER_EMAIL')) throw new Error('הגדירו קודם את האימייל שלכם לקבלת התראות');
+    await sendEmail(env('OWNER_EMAIL'), 'בדיקת חיבור', 'החיבור לאימייל תקין ✅');
+    return `נשלח מייל בדיקה אל ${env('OWNER_EMAIL')}`;
+  }
+  throw new Error('שירות לא מוכר');
+}
 async function publish(post, campaign) {
   const c = connectors(), ch = post.channel;
   if (ch === 'Facebook' && c.facebook) {
@@ -104,7 +160,7 @@ async function notify(text, event = 'notify', data = {}) {
 // --- AI ---
 async function claude(prompt, max = 1500) {
   if (!env('ANTHROPIC_API_KEY')) throw httpErr(400, 'לא הוגדר ANTHROPIC_API_KEY');
-  const r = await postJson('https://api.anthropic.com/v1/messages',
+  const r = await postJson(env('ANTHROPIC_API_URL') || 'https://api.anthropic.com/v1/messages',
     { model: env('AI_MODEL') || 'claude-sonnet-5-5', max_tokens: max, messages: [{ role: 'user', content: prompt }] },
     { 'x-api-key': env('ANTHROPIC_API_KEY'), 'anthropic-version': '2023-06-01' });
   return (r.content || []).map(b => b.text || '').join('').trim();
@@ -176,8 +232,27 @@ export function createApp(store) {
     return u && { email: u.email, name: u.name, role: u.role };
   }
 
+  async function digest(now) {
+    const c = connectors();
+    if (env('WEEKLY_DIGEST') === 'off' || !(c.telegram || c.webhook || (c.email && env('OWNER_EMAIL')))) return;
+    const last = Date.parse((await getMeta(store)).lastDigest || 0) || 0;
+    if (now - last < 7 * 864e5) return;
+    const st = await computeStats(store, now);
+    if (!st.campaigns.length && !st.leadsTotal) return;
+    let lines = ruleInsights(st);
+    if (env('ANTHROPIC_API_KEY')) {
+      const ai = parseBullets(await claude(insightsPrompt(st, env('BUSINESS_PROFILE')), 800).catch(() => ''));
+      if (ai.length) lines = ai;
+    }
+    const text = '📊 סיכום שבועי\n' + lines.map(l => '• ' + l).join('\n');
+    await notify(text, 'digest');
+    if (c.email && env('OWNER_EMAIL')) await sendEmail(env('OWNER_EMAIL'), 'סיכום שבועי', text).catch(e => console.error('digest email:', e.message));
+    await setMeta(store, { lastDigest: new Date(now).toISOString() });
+  }
+
   async function tick() {
     await ensureAdmin();
+    await loadSettings(store);
     const now = Date.now();
     for (const p of await store.list('posts')) {
       if (p.status !== 'מתוזמן' || !p.at || Date.parse(p.at) > now) continue;
@@ -200,10 +275,12 @@ export function createApp(store) {
         await notify(`📞 ליד ממתין יותר מיומיים: ${l.name} ${l.phone} ${l.email}`, 'lead.stale', { lead: l });
       }
     }
+    await digest(now).catch(e => console.error('digest:', e.message));
   }
 
   async function api(req, res, url) {
     await ensureAdmin();
+    await loadSettings(store);
     const parts = url.pathname.replace(/^\/api(?=\/|$)/, '').split('/').filter(Boolean);
     const method = req.method, ip = clientIp(req);
 
@@ -218,7 +295,7 @@ export function createApp(store) {
       const cid = String(b.campaign || '').slice(0, 40);
       const attributed = cid && await store.get('campaigns', cid) ? cid : '';
       const lead = await store.put('leads', uid(), pick('leads', { name: b.name, phone: b.phone, email: b.email, note: b.message, campaign: attributed }, { created: new Date().toISOString().slice(0, 10), stage: 'חדש', value: 0 }));
-      await notify(`🆕 ליד חדש מהאתר: ${lead.name} ${lead.phone} ${lead.email}\n${lead.note || ''}`, 'lead.created', { lead });
+      await onNewLead(lead);
       return send(res, 200, { ok: true }, cors);
     }
 
@@ -256,6 +333,34 @@ export function createApp(store) {
         catch (e) { throw e.code === 'EXISTS' ? httpErr(409, 'המשתמש כבר קיים') : e; }
         return send(res, 201, { ok: true });
       }
+    }
+
+    if (parts[0] === 'settings') {
+      if (user.role !== 'admin') throw httpErr(403, 'למנהלים בלבד');
+      if (method === 'GET' && !parts[1]) return send(res, 200, { groups: describeSettings(), encrypted: !!process.env.SETTINGS_KEY });
+      if (method === 'PUT' && !parts[1]) {
+        const b = await readBody(req);
+        await saveSettings(store, b.values && typeof b.values === 'object' ? b.values : {}, b.clear);
+        return send(res, 200, { groups: describeSettings() });
+      }
+      if (method === 'POST' && parts[1] === 'test') {
+        if (limited('test:' + user.email, 20, 3600e3)) throw httpErr(429, 'יותר מדי בדיקות, נסו שוב מאוחר יותר');
+        const { service } = await readBody(req);
+        if (!['ai', 'facebook', 'telegram', 'webhook', 'email'].includes(service)) throw httpErr(400, 'שירות לא מוכר');
+        try { return send(res, 200, { ok: true, detail: await testService(service) }); }
+        catch (e) { return send(res, 200, { ok: false, detail: String(e.message).slice(0, 300) }); }
+      }
+    }
+
+    if (parts[0] === 'insights' && method === 'POST') {
+      const { ai } = await readBody(req);
+      const st = await computeStats(store);
+      if (ai && env('ANTHROPIC_API_KEY')) {
+        if (limited('ai:' + user.email, 30, 3600e3)) throw httpErr(429, 'חריגה ממכסת AI לשעה');
+        const lines = parseBullets(await claude(insightsPrompt(st, env('BUSINESS_PROFILE')), 900));
+        if (lines.length) return send(res, 200, { ai: true, insights: lines });
+      }
+      return send(res, 200, { ai: false, insights: ruleInsights(st) });
     }
 
     if (parts[0] === 'ai') {

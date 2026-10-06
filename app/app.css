@@ -54,3 +54,10 @@ table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px so
 .badge{font-size:.78rem;padding:2px 9px;border-radius:99px;background:var(--alt);color:var(--muted)}.badge.auto{background:#5f8f0822;color:var(--brand2);font-weight:700}
 .qfoot{position:sticky;bottom:-22px;background:var(--bg);padding:12px 0 4px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 #toast{position:fixed;bottom:22px;inset-inline:0;margin-inline:auto;width:max-content;max-width:90vw;background:var(--fg);color:var(--bg);padding:12px 20px;border-radius:99px;z-index:100;box-shadow:0 6px 24px #0005}
+.set-group h3{margin:0}.set-group details{font-size:.9rem}.set-group summary{cursor:pointer;color:var(--brand)}
+.test-result{font-size:.9rem}.test-result.ok{color:var(--brand2)}.test-result.err{color:#d33}
+.insights{margin:0;padding-inline-start:20px;display:grid;gap:8px}
+.lead .acts a{background:var(--alt);border-radius:8px;padding:6px 12px;text-decoration:none}
+.acts button.btn{background:linear-gradient(90deg,var(--brand),var(--brand2));color:var(--on-brand)}
+.acts button.btn-ghost{background:none;color:var(--brand)}
+input[dir=ltr],textarea[dir=ltr]{text-align:left}
