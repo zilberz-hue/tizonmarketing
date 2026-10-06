@@ -130,10 +130,36 @@ const EVENT_TEXT = {
   'leads.create': e => `נוסף ליד "${e.label}"`, 'leads.update': e => `עודכן ליד "${e.label}" (${(e.fields || []).join(', ')})`, 'leads.delete': e => `נמחק ליד "${e.label}"`, 'leads.contacted': e => `נרשמה שיחה עם "${e.label}"`, 'lead.website': e => `ליד חדש מהאתר: "${e.label}"`,
   'settings.update': e => `עודכנו הגדרות (${(e.fields || []).join(', ')})`, 'media.create': () => 'הועלתה תמונה או באנר', 'plan.tick': e => `${e.done ? 'סומנה' : 'בוטלה'} משימה בתוכנית העבודה (${e.label})`,
   'workspace.create': e => `נוצרה סביבת עבודה "${e.label}"`, 'access.update': e => `עודכנו הרשאות של ${e.label}`, 'user.create': e => `נוסף איש צוות ${e.label}`,
+  'patients.create': () => 'נוסף מטופל', 'patients.update': () => 'עודכנו פרטי מטופל', 'patients.delete': () => 'נמחק מטופל וכל הנתונים שלו', 'care.entry': e => `נרשמה רשומת ליווי (${e.kind})`, 'care.link': e => (e.revoked ? 'בוטל קישור ליווי למטופל' : 'נוצר קישור ליווי למטופל'), 'care.patient': e => `מטופל שלח ${e.kind === 'question' ? 'שאלה' : 'עדכון'}`,
   'knowledge.add': e => `נרשם ${e.kind === 'need' ? 'צורך' : e.kind === 'decision' ? 'החלטה' : 'הערה'}: "${e.label}"`, 'academy.lesson': e => `הושלם שיעור "${e.label}" (${e.score}%)`
 };
 const describeEvent = e => (e.type.startsWith('ai.') ? `שימוש ב-AI (${e.type.slice(3)})` : (EVENT_TEXT[e.type]?.(e) || e.type));
 const labelOf = o => String(o?.name || o?.title || o?.text || o?.channel || '').replace(/\s+/g, ' ').slice(0, 60);
+
+// ---- Patient care: private health data. Names and health details never reach the activity log, AI prompts or notifications. ----
+const DAYRE = /^\d{4}-\d{2}-\d{2}$/, PSTATUS = ['פעיל', 'מושהה', 'הושלם'];
+const firstName = n => String(n || '').trim().split(/\s+/)[0].slice(0, 20);
+function cleanPatient(b, cur = {}) {
+  const out = { ...cur }, str = (k, max) => { if (k in b) out[k] = String(b[k] ?? '').trim().slice(0, max); };
+  str('name', 80); str('phone', 30); str('email', 120); str('goal', 500); str('note', 2000);
+  if ('status' in b && PSTATUS.includes(b.status)) out.status = b.status;
+  if ('next' in b) { if (b.next && !DAYRE.test(String(b.next))) throw httpErr(400, 'תאריך לא תקין'); out.next = String(b.next || ''); }
+  if ('consent' in b) { const c = b.consent ? 1 : 0; if (c && !cur.consent) out.consentAt = new Date().toISOString(); out.consent = c; if (!c) out.token = ''; }
+  if (!out.name) throw httpErr(400, 'נא למלא שם');
+  return out;
+}
+const num = (v, lo, hi) => { if (v === '' || v == null) return null; const n = +v; return Number.isFinite(n) ? clamp(n, lo, hi) : null; };
+function cleanEntry(b) {
+  const e = { weight: num(b.weight, 20, 400), energy: num(b.energy, 1, 5), mood: num(b.mood, 1, 5), text: String(b.text || '').trim().slice(0, 1500) };
+  if (e.weight == null && e.energy == null && e.mood == null && !e.text) throw httpErr(400, 'נא למלא לפחות שדה אחד');
+  return Object.fromEntries(Object.entries(e).filter(([, v]) => v !== null && v !== ''));
+}
+const sameToken = (a, b) => { const x = Buffer.from(String(a || '')), y = Buffer.from(String(b || '')); return x.length > 0 && x.length === y.length && crypto.timingSafeEqual(x, y); };
+const careEntries = async (S, pid) => (await S.list('care')).filter(e => e.patient === pid).sort((a, b) => b.at.localeCompare(a.at));
+async function addEntry(S, pid, by, type, body, extra = {}) {
+  const at = new Date().toISOString();
+  return S.put('care', `${pid}-${String(Date.now()).padStart(13, '0')}-${crypto.randomBytes(2).toString('hex')}`, { patient: pid, at, by, type, ...cleanEntry(body), ...extra });
+}
 async function logEvent(S, user, type, data = {}) {
   try {
     const clean = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 120) : Array.isArray(v) ? v.map(x => String(x).slice(0, 40)).slice(0, 12) : v]));
@@ -434,7 +460,7 @@ export function createApp(store, opts = {}) {
         if (risk.level === 'high') {
           await logEvent(store, null, 'post.blocked', { id: p.id, label: labelOf(p), channel: p.channel });
           await store.put('posts', p.id, { ...p, status: 'ממתין לבדיקה', error: 'ניסוח עלול להיחשב הבטחה רפואית: ' + risk.findings.filter(f => f.level === 'high').map(f => f.match).join(', ') });
-          await notify(`🛑 פוסט ל-${p.channel} נעצר לבדיקה (ניסוח רפואי בעייתי):\\n${p.text.slice(0, 200)}`, 'post.blocked');
+          await notify(`🛑 פוסט ל-${p.channel} נעצר לבדיקה (ניסוח רפואי בעייתי):\n${p.text.slice(0, 200)}`, 'post.blocked');
           continue;
         }
       }
@@ -445,7 +471,7 @@ export function createApp(store, opts = {}) {
           ? { ...p, status: 'פורסם', via: r.via, ref: r.ref, publishedAt: new Date().toISOString(), error: '' }
           : { ...p, status: 'ידני', error: 'אין חיבור לערוץ – יש לפרסם ידנית' });
         if (r) await logEvent(store, null, 'post.published', { id: p.id, label: labelOf(p), channel: p.channel });
-        if (!r) await notify(`⏰ פוסט ל-${p.channel} ממתין לפרסום ידני:\\n${p.text.slice(0, 200)}`, 'post.manual');
+        if (!r) await notify(`⏰ פוסט ל-${p.channel} ממתין לפרסום ידני:\n${p.text.slice(0, 200)}`, 'post.manual');
       } catch (e) {
         const attempts = (p.attempts || 0) + 1;
         await store.put('posts', p.id, { ...p, attempts, error: e.message, status: attempts >= 3 ? 'נכשל' : 'מתוזמן', at: attempts >= 3 ? p.at : new Date(now + attempts * 5 * 60e3).toISOString() });
@@ -463,7 +489,14 @@ export function createApp(store, opts = {}) {
       if (env('FOLLOWUP') !== 'off' && hourNow >= 8 && l.next && l.next <= today && l.remindedOn !== l.next && !['נסגר', 'אבוד'].includes(l.stage)) {
         await store.put('leads', l.id, { ...l, remindedOn: l.next });
         const wa = waLink(l.phone);
-        await notify(`🔔 היום לחזור אל ${oneLine(l.name)} ${l.phone || ''}${wa ? `\\n💬 ${wa}` : ''}`, 'lead.followup', { lead: l });
+        await notify(`🔔 היום לחזור אל ${oneLine(l.name)} ${l.phone || ''}${wa ? `\n💬 ${wa}` : ''}`, 'lead.followup', { lead: l });
+      }
+    }
+    for (const pt of await store.list('patients')) {
+      if (pt.status === 'פעיל' && hourNow >= 8 && pt.next && pt.next <= today && pt.remindedOn !== pt.next) {
+        await store.put('patients', pt.id, { ...pt, remindedOn: pt.next });
+        const wa = waLink(pt.phone);
+        await notify(`🔔 היום ליווי: ${firstName(pt.name)}${wa ? `\n💬 ${wa}` : ''}`, 'care.followup');
       }
     }
     await selfLearn(store, now).catch(e => console.error('learn:', e.message));
@@ -695,6 +728,30 @@ ${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
         await onNewLead(lead);
       });
       return send(res, 200, { ok: true }, cors);
+    }
+
+    if (parts[0] === 'care' && !parts[1]) {
+      // Patient-facing page: a private link (patient id + secret token). Only the patient's own data, never staff notes.
+      if (method !== 'GET' && method !== 'POST') throw httpErr(405, 'Method not allowed');
+      if (limited('care:' + ip, 40, 600e3)) throw httpErr(429, 'יותר מדי בקשות, נסו שוב מאוחר יותר');
+      const q = method === 'GET' ? Object.fromEntries(url.searchParams) : await readBody(req);
+      const lws = String(q.w || 'main'), pid = String(q.p || '');
+      if (lws !== 'main' && !(await listWorkspaces()).some(w => w.id === lws)) throw httpErr(404, 'הקישור אינו תקין');
+      const CS = scoped(lws);
+      return await runWith({ ws: lws, overrides: await loadSettings(CS, lws) }, async () => {
+        const pt = /^[a-f0-9]{12}$/.test(pid) ? await CS.get('patients', pid) : null;
+        if (!pt || !pt.consent || !sameToken(pt.token, q.t)) throw httpErr(404, 'הקישור אינו תקין או שבוטל');
+        if (method === 'POST') {
+          if (limited('care:' + pid, 30, 3600e3)) throw httpErr(429, 'יותר מדי עדכונים, נסו שוב מאוחר יותר');
+          const type = q.type === 'question' ? 'question' : 'checkin';
+          await addEntry(CS, pid, 'patient', type, q);
+          await logEvent(CS, { email: 'patient' }, 'care.patient', { kind: type });
+          await notify(`📩 ${firstName(pt.name)} שלח/ה ${type === 'question' ? 'שאלה' : 'עדכון'} דרך הפורטל. אפשר להיכנס למערכת ולענות.`, 'care.patient');
+        }
+        const entries = (await careEntries(CS, pid)).filter(e => e.by === 'patient' || e.type === 'reply' || (e.type === 'measure' && e.visible !== 0))
+          .map(({ at, by, type, weight, energy, mood, text, answered }) => ({ at, by, type, weight, energy, mood, text, answered }));
+        return send(res, 200, { ok: true, name: pt.name, goal: pt.goal, next: pt.next || '', contact: env('CONTACT_PHONE'), entries });
+      });
     }
 
     if (parts[0] === 'login' && method === 'POST') {
@@ -956,6 +1013,62 @@ ${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
       }
       await logEvent(store, user, 'campaigns.reorder', { count: n });
       return send(res, 200, { ok: true, updated: n });
+    }
+
+    if (parts[0] === 'patients') {
+      const id = parts[1], sub = parts[2], today = israelDate();
+      const need = async () => { const pt = /^[a-f0-9]{12}$/.test(id || '') ? await store.get('patients', id) : null; if (!pt) throw httpErr(404, 'לא נמצא'); return pt; };
+      const pub = ({ token, ...rest }) => ({ ...rest, hasLink: !!token });
+      if (!id && method === 'GET') {
+        const all = await store.list('care'), by = new Map();
+        for (const e of all) (by.get(e.patient) || by.set(e.patient, []).get(e.patient)).push(e);
+        return send(res, 200, (await store.list('patients')).map(pt => {
+          const es = (by.get(pt.id) || []).sort((a, b) => b.at.localeCompare(a.at)), ws_ = es.filter(e => e.weight != null);
+          return { ...pub(pt), lastAt: es[0]?.at || '', lastWeight: ws_[0]?.weight ?? null, firstWeight: ws_.length > 1 ? ws_[ws_.length - 1].weight : null,
+            open: es.filter(e => e.type === 'question' && !e.answered).length, due: !!(pt.next && pt.next <= today && pt.status === 'פעיל') };
+        }).sort((a, b) => (b.open - a.open) || (+b.due - +a.due) || a.name.localeCompare(b.name, 'he')));
+      }
+      if (!id && method === 'POST') {
+        const created = await store.put('patients', uid(), { ...cleanPatient(await readBody(req)), status: 'פעיל', created: today, token: '' });
+        await logEvent(store, user, 'patients.create', {});
+        return send(res, 201, pub(created));
+      }
+      if (id && !sub && method === 'GET') { const pt = await need(); return send(res, 200, { patient: pub(pt), entries: await careEntries(store, id) }); }
+      if (id && !sub && method === 'PUT') {
+        const pt = await need(), b = await readBody(req);
+        const upd = await store.put('patients', id, cleanPatient(b, pt));
+        await logEvent(store, user, 'patients.update', {});
+        return send(res, 200, pub(upd));
+      }
+      if (id && !sub && method === 'DELETE') {
+        await need();
+        for (const e of await careEntries(store, id)) await store.del('care', e.id);
+        await store.del('patients', id);
+        await logEvent(store, user, 'patients.delete', {});
+        return send(res, 200, { ok: true });
+      }
+      if (id && sub === 'entries' && method === 'POST') {
+        await need();
+        const b = await readBody(req), type = ['measure', 'note', 'reply'].includes(b.type) ? b.type : 'note';
+        const extra = type === 'note' ? { visible: 0 } : {};
+        if (type === 'reply' && b.replyTo) {
+          const q = await store.get('care', String(b.replyTo));
+          if (q && q.patient === id && q.type === 'question') await store.put('care', q.id, { ...q, answered: 1 });
+        }
+        const e = await addEntry(store, id, 'staff', type, b, extra);
+        await logEvent(store, user, 'care.entry', { kind: type });
+        return send(res, 201, e);
+      }
+      if (id && sub === 'link' && method === 'POST') {
+        const pt = await need(), b = await readBody(req);
+        if (b.revoke) { await store.put('patients', id, { ...pt, token: '' }); await logEvent(store, user, 'care.link', { revoked: 1 }); return send(res, 200, { ok: true }); }
+        if (!pt.consent) throw httpErr(400, 'צריך קודם לסמן שהמטופל/ת אישר/ה שימוש בפורטל ואיסוף מידע');
+        const token = (!pt.token || b.rotate) ? crypto.randomBytes(16).toString('hex') : pt.token;
+        if (token !== pt.token) await store.put('patients', id, { ...pt, token });
+        await logEvent(store, user, 'care.link', {});
+        return send(res, 200, { path: `/care/?w=${encodeURIComponent(ws)}&p=${id}&t=${token}` });
+      }
+      throw httpErr(404, 'Not found');
     }
 
     if (SCHEMA[parts[0]]) {
