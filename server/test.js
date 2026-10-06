@@ -25,10 +25,17 @@ const mock2 = http.createServer((req, res) => {
       if (req.url.includes('fan_count')) return res.end(JSON.stringify({ fan_count: 321 }));
       if (req.url.includes('reactions')) return res.end(JSON.stringify({ reactions: { summary: { total_count: 7 } }, comments: { summary: { total_count: 2 } }, shares: { count: 1 } }));
     }
+    if (req.url === '/openai/images/generations') {
+      const big = String(body.prompt || '').includes('BIGIMAGE');
+      return res.end(JSON.stringify({ data: [{ b64_json: big ? Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(800e3)]).toString('base64') : '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAIAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDnKKKK8Q9E/9k=' }] }));
+    }
+    if (req.url === '/openai/models') return res.end(JSON.stringify({ data: [{ id: 'gpt-image-1' }] }));
     if (req.url === '/anthropic-bad') { res.statusCode = 401; return res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } })); }
     if (req.url === '/anthropic') {
       const prompt = body.messages?.[0]?.content || '';
-      const text = prompt.includes('ההנחיה של המשתמש') ? (prompt.includes('כתוב שזה מרפא') ? 'המוצר מרפא הכול' : 'טקסט משודרג')
+      const text = prompt.includes('כותרות לבאנר') ? JSON.stringify([{ headline: 'כותרת א', sub: 'שורה א', cta: 'התקשרו' }, { headline: 'המוצר מרפא', sub: '', cta: 'עכשיו' }, { headline: 'כותרת ג', sub: '', cta: '' }])
+        : prompt.includes('Write ONE short English prompt') ? 'calm wellness background, soft light'
+        : prompt.includes('ההנחיה של המשתמש') ? (prompt.includes('כתוב שזה מרפא') ? 'המוצר מרפא הכול' : 'טקסט משודרג')
         : prompt.includes('"posts"') ? JSON.stringify({ name: 'קמפיין AI', goal: 'מכירות', audience: 'קהל', message: 'מסר', posts: [{ day: 0, channel: 'Facebook', text: 'פוסט א' }, { day: 3, channel: 'Nope', text: 'פוסט ב' }] })
         : prompt.includes('תובנות') ? '- להגדיל את הקמפיין הטוב\n- לעצור את החלש' : 'שלום';
       return res.end(JSON.stringify({ content: [{ type: 'text', text }] }));
@@ -42,6 +49,7 @@ process.env.ANTHROPIC_API_URL = m2 + '/anthropic';
 process.env.RESEND_API_URL = m2 + '/emails';
 process.env.TELEGRAM_API_URL = m2 + '/tg';
 process.env.FACEBOOK_API_URL = m2 + '/fb';
+process.env.OPENAI_BASE_URL = m2 + '/openai';
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tizon-'));
 process.env.ADMIN_EMAIL = 'a@b.co';
@@ -371,6 +379,32 @@ assert.equal(leadsNow.find(l => l.name === 'זר').campaign, '');
   assert.equal(risky2.data.risk.level, 'high', 'an AI rewrite that makes medical claims is flagged');
   assert.equal((await call('POST', '/api/ai/improve', { text: '', instruction: 'כתוב ברכה קצרה' })).status, 200, 'works from an empty field');
   assert.equal((await call('POST', '/api/ai/improve', { text: '', instruction: '' })).status, 400);
+}
+
+// Image studio: AI banner copy, image prompt, and image generation stored in the media library
+{
+  const copy = await call('POST', '/api/ai/banner-copy', { text: 'ייעוץ בריאות אישי' });
+  assert.equal(copy.status, 200); assert.equal(copy.data.options.length, 3);
+  assert.equal(copy.data.options[0].headline, 'כותרת א'); assert.equal(copy.data.options[1].risk.level, 'high', 'risky banner copy is flagged');
+  assert.equal((await call('POST', '/api/ai/banner-copy', {})).status, 400);
+  const ip = await call('POST', '/api/ai/image-prompt', { text: 'שיחת היכרות חינם' });
+  assert.equal(ip.data.prompt, 'calm wellness background, soft light');
+
+  assert.equal((await call('POST', '/api/ai/image', { prompt: 'שדה פתוח בשקיעה' })).status, 400, 'image generation needs an OpenAI key');
+  await call('PUT', '/api/settings', { values: { OPENAI_API_KEY: 'sk-img-1234' } });
+  assert.equal((await call('GET', '/api/state')).data.caps.image, true);
+  assert.equal((await call('POST', '/api/settings/test', { service: 'image' })).data.ok, true);
+  const img = await call('POST', '/api/ai/image', { prompt: 'open field at sunset', size: '1024x1536' });
+  assert.equal(img.status, 200); assert.match(img.data.url, /^\/api\/media\/[a-f0-9]{24}$/);
+  const got2 = await fetch(base + img.data.url);
+  assert.equal(got2.status, 200); assert.equal(got2.headers.get('content-type'), 'image/jpeg');
+  const sent = mock2log.filter(r => r.path === '/openai/images/generations').pop();
+  assert.equal(sent.auth, 'Bearer sk-img-1234'); assert.equal(sent.body.size, '1024x1536'); assert.equal(sent.body.output_format, 'jpeg');
+  assert.ok(sent.body.prompt.includes('open field at sunset') && sent.body.prompt.includes('No text'), 'prompt keeps the user text and bans text in the image');
+  const huge = await call('POST', '/api/ai/image', { prompt: 'BIGIMAGE' });
+  assert.equal(huge.status, 502); assert.match(huge.data.error, /גדולה מדי/);
+  assert.equal((await call('POST', '/api/ai/image', { prompt: 'x' })).status, 400);
+  await call('PUT', '/api/settings', { clear: ['OPENAI_API_KEY'] });
 }
 
 // work-plan checklist: shared, validated, returned in /state

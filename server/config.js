@@ -10,7 +10,7 @@ export const runWith = (context, fn) => als.run(context, fn);
 export const ctx = () => als.getStore();
 // Workspaces other than "main" never inherit integration keys from the environment (so a client can
 // never publish to another client's page); only the AI key is shared with the agency.
-const SHARED_FALLBACK = new Set(['ANTHROPIC_API_KEY', 'AI_MODEL']);
+const SHARED_FALLBACK = new Set(['ANTHROPIC_API_KEY', 'AI_MODEL', 'OPENAI_API_KEY', 'IMAGE_MODEL']);
 export const env = k => {
   const c = als.getStore();
   if (c && c.ws !== 'main' && FIELDS.has(k) && !SHARED_FALLBACK.has(k)) return c.overrides?.[k] || '';
@@ -24,6 +24,12 @@ export const GROUPS = [
     fields: [
       { key: 'ANTHROPIC_API_KEY', label: 'מפתח API', secret: true, placeholder: 'sk-ant-…' },
       { key: 'AI_MODEL', label: 'מודל (אופציונלי)', placeholder: 'claude-sonnet-5-5' }
+    ] },
+  { id: 'image', title: '🎨 יצירת תמונות עם AI', desc: 'רקעים ותמונות לפוסטים ולבאנרים. המעצב של הבאנרים עובד גם בלי מפתח. יצירת תמונות בתשלום לפי שימוש אצל הספק.', test: 'image', required: ['OPENAI_API_KEY'],
+    help: 'מפתח מ-platform.openai.com ← API keys. ייתכן שיידרש אימות ארגון לפני שימוש במודל התמונות.',
+    fields: [
+      { key: 'OPENAI_API_KEY', label: 'מפתח OpenAI', secret: true, placeholder: 'sk-…' },
+      { key: 'IMAGE_MODEL', label: 'מודל תמונות (אופציונלי)', placeholder: 'gpt-image-1' }
     ] },
   { id: 'business', title: '🏢 על העסק', desc: 'ה-AI ישתמש בזה כדי לכתוב בקול של העסק שלכם.', required: [],
     fields: [{ key: 'BUSINESS_PROFILE', label: 'תיאור קצר של העסק', type: 'textarea', placeholder: 'מי אתם, מה אתם מציעים, באיזה טון לדבר, מה אסור לומר' }] },

@@ -134,3 +134,13 @@ input[dir=ltr],textarea[dir=ltr]{text-align:left}
 .ai-fab:hover{filter:brightness(1.08)}
 #ai-dlg{z-index:100}
 .panel .qfoot{position:static;background:transparent}
+
+/* image & banner studio */
+.studio{width:min(1020px,96vw)}
+.studio-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.studio-preview{position:sticky;top:0;background:var(--alt);border-radius:14px;padding:10px;display:grid;place-items:center}
+#studio-canvas{max-width:100%;max-height:70vh;border-radius:10px;box-shadow:0 6px 20px #0003}
+.studio-controls{display:grid;gap:10px}.studio-controls label{display:grid;gap:4px;font-size:.9rem;color:var(--muted)}
+.chip-btn.on{border-color:var(--brand);background:var(--bg);color:var(--brand);font-weight:700}
+.st-options{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.st-ai{background:var(--alt)}
+@media (max-width:760px){.studio-grid{grid-template-columns:1fr}.studio-preview{position:static}}

@@ -1,7 +1,7 @@
 // Minimal service worker: makes the app installable and keeps the shell available offline.
 // Network-first for everything (so new deployments show up immediately); /api/* is never cached.
 const CACHE = 'tizon-v1';
-const SHELL = ['/app/', '/app/index.html', '/app/app.css', '/app/app.js', '/app/plan.js', '/app/extras.js', '/app/ai-assist.js', '/style.css', '/assets/logo.webp', '/assets/favicon.png'];
+const SHELL = ['/app/', '/app/index.html', '/app/app.css', '/app/app.js', '/app/plan.js', '/app/extras.js', '/app/ai-assist.js', '/app/studio.js', '/style.css', '/assets/logo.webp', '/assets/favicon.png'];
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(() => {})); self.skipWaiting(); });
 self.addEventListener('activate', e => {
