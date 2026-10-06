@@ -443,6 +443,21 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
       }
       return { created, status };
     },
+    // Rewrite any text field according to a one-line instruction from the user ("shorter", "warmer", ...).
+    async improve(S, b) {
+      const text = String(b.text || '').trim().slice(0, 4000);
+      const instruction = String(b.instruction || '').trim().slice(0, 300);
+      const label = String(b.label || 'טקסט').replace(/[\r\n]+/g, ' ').slice(0, 80);
+      if (!text && !instruction) throw httpErr(400, 'כתבו טקסט, או הנחיה לגבי מה לכתוב');
+      const channel = CHANNELS.includes(b.channel) ? b.channel : '';
+      const improved = (await claude(`אתה עורך שיווקי מקצועי בעברית. השדה: "${label}".${channel ? ` הטקסט מיועד לערוץ ${channel}.` : ''}
+${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0, 500) + '\n' : ''}${text ? `הטקסט הנוכחי:\n\"\"\"\n${text}\n\"\"\"` : 'אין עדיין טקסט בשדה, כתבו אותו מאפס.'}
+ההנחיה של המשתמש: ${instruction || 'שפר את הטקסט: חד, ברור ומשכנע יותר.'}
+כללים: החזר רק את הטקסט הסופי, בלי הסברים, בלי כותרות ובלי מרכאות מסביב. כתוב בעברית. שמור על המסר ועל העובדות; אל תמציא מחירים, מספרים או עובדות שלא ניתנו. בלי הבטחות רפואיות, בלי טענות ריפוי ובלי "לפני/אחרי". התאם את האורך לשדה (שם: קצר; פוסט: עד כ-600 תווים; הערה: קצרה).`, 900))
+        .replace(/^["“״']+|["”״']+$/g, '').trim();
+      if (!improved) throw httpErr(502, 'ה-AI לא החזיר טקסט, נסו שוב');
+      return { text: improved, risk: checkText(improved) };
+    },
     async fix(S, b) {
       const text = String(b.text || '').slice(0, 4000);
       const fixed = await claude(fixPrompt(text, checkText(text).findings, env('BUSINESS_PROFILE')), 800);
@@ -668,7 +683,8 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
       const b = await readBody(req);
       if (parts[1] === 'quick-campaign' && String(b.idea || '').trim().length < 3) throw httpErr(400, 'ספרו במשפט אחד מה רוצים לקדם');
       if (parts[1] === 'plan' && !(await store.get('campaigns', String(b.campaign || '')))) throw httpErr(404, 'קמפיין לא נמצא');
-      if (['generate', 'quick-campaign', 'plan'].includes(parts[1])) return send(res, 200, await runAi(store, user, ws, parts[1], b));
+      if (parts[1] === 'improve' && !env('ANTHROPIC_API_KEY')) throw httpErr(400, 'לשדרוג עם AI חברו מפתח בהגדרות ← בינה מלאכותית');
+      if (['generate', 'quick-campaign', 'plan', 'improve'].includes(parts[1])) return send(res, 200, await runAi(store, user, ws, parts[1], b));
     }
 
     if (parts[0] === 'campaigns' && parts[1] === 'order' && method === 'POST') {

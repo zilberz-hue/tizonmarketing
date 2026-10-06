@@ -128,3 +128,9 @@ input[dir=ltr],textarea[dir=ltr]{text-align:left}
 .kcard .acts button{padding:4px 10px;font-size:.85rem}
 .empty-col{text-align:center;padding:24px 0;border:2px dashed #8884;border-radius:10px;margin:0}
 @media (max-width:800px){.board{grid-template-columns:1fr}}
+
+/* AI upgrade button */
+.ai-fab{position:fixed;z-index:90;border:0;border-radius:99px;padding:5px 12px;font:inherit;font-size:.82rem;font-weight:700;cursor:pointer;color:var(--on-brand);background:linear-gradient(90deg,var(--brand),var(--brand2));box-shadow:0 4px 14px #0004}
+.ai-fab:hover{filter:brightness(1.08)}
+#ai-dlg{z-index:100}
+.panel .qfoot{position:static;background:transparent}
