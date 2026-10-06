@@ -17,6 +17,7 @@ export function blobsStore(blobs) {
       if (await getJSON(key)) throw Object.assign(new Error('exists'), { code: 'EXISTS' });
       await blobs.setJSON(key, { email, name, hash, role });
     },
+    async setRole(email, role) { const key = 'users/' + enc(email), u = await getJSON(key); if (u) await blobs.setJSON(key, { ...u, role }); },
     async createSession(token, email, exp) { await blobs.setJSON('sessions/' + token, { email, exp }); },
     getSession: token => getJSON('sessions/' + token),
     async delSession(token) { await blobs.delete('sessions/' + token); },

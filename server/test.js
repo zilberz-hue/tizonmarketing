@@ -566,6 +566,21 @@ assert.ok(!ck.s1 && ck['k1@2026-10-04']);
   assert.equal((await call('GET', '/api/patients')).data.length, 0);
 }
 
+// roles: admin can promote/demote; the last admin cannot be demoted; members cannot change roles
+{
+  assert.equal((await call('POST', '/api/users', { email: 'nat@x.co', name: 'נטלי', password: 'password123', role: 'member' })).status, 201);
+  const tok = (await (await fetch(base + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'nat@x.co', password: 'password123' }) })).json()).token;
+  const asMember = (m, p, b) => fetch(base + p, { method: m, headers: { 'content-type': 'application/json', 'x-requested-with': 'tizon', authorization: 'Bearer ' + tok }, body: b ? JSON.stringify(b) : undefined });
+  assert.equal((await asMember('PUT', '/api/users', { email: 'nat@x.co', role: 'admin' })).status, 403);
+  assert.equal((await call('PUT', '/api/users', { email: 'nat@x.co', role: 'owner' })).status, 400);
+  assert.equal((await call('PUT', '/api/users', { email: 'nobody@x.co', role: 'admin' })).status, 404);
+  assert.equal((await call('PUT', '/api/users', { email: 'nat@x.co', role: 'admin' })).status, 200);
+  assert.equal((await (await asMember('GET', '/api/state')).json()).me.role, 'admin', 'promotion applies to the live session');
+  assert.equal((await asMember('GET', '/api/users')).status, 200);
+  assert.equal((await call('PUT', '/api/users', { email: 'nat@x.co', role: 'member' })).status, 200);
+  assert.equal((await call('PUT', '/api/users', { email: 'a@b.co', role: 'member' })).status, 400, 'no self-demotion');
+}
+
 const del = await call('DELETE', '/api/posts/' + p.id);
 assert.equal(del.status, 200);
 console.log('all tests passed');

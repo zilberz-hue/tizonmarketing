@@ -16,6 +16,7 @@ export function sqliteStore(file) {
       try { db.prepare('INSERT INTO users(email,name,hash,role) VALUES(?,?,?,?)').run(email, name, hash, role); }
       catch { throw Object.assign(new Error('exists'), { code: 'EXISTS' }); }
     },
+    async setRole(email, role) { db.prepare('UPDATE users SET role=? WHERE email=?').run(role, email); },
     async createSession(token, email, exp) { db.prepare('DELETE FROM sessions WHERE exp<?').run(Date.now()); db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(token, email, exp); },
     async getSession(token) { return db.prepare('SELECT email, exp FROM sessions WHERE token=?').get(token) || null; },
     async delSession(token) { db.prepare('DELETE FROM sessions WHERE token=?').run(token); },
