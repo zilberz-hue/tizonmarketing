@@ -7,7 +7,7 @@ import { computeStats, ruleInsights, insightsPrompt, parseBullets } from './insi
 import { checkText, fixPrompt } from './compliance.js';
 
 const SCHEMA = {
-  campaigns: { name: 's', goal: 's', audience: 's', channels: 'a', budget: 'n', target: 'n', start: 's', end: 's', message: 's', spent: 'n', status: 's', fbCampaign: 's', impressions: 'n', clicks: 'n' },
+  campaigns: { name: 's', goal: 's', audience: 's', channels: 'a', budget: 'n', target: 'n', start: 's', end: 's', message: 's', spent: 'n', status: 's', fbCampaign: 's', impressions: 'n', clicks: 'n', order: 'n' },
   posts: { campaign: 's', channel: 's', at: 's', text: 's', status: 's', error: 's', publishedAt: 's', via: 's', attempts: 'n', override: 'n', image: 's', ref: 's', likes: 'n', comments: 'n', shares: 'n', metricsAt: 's' },
   leads: { name: 's', phone: 's', email: 's', campaign: 's', value: 'n', stage: 's', created: 's', note: 's', followedUp: 'n', variant: 's', next: 's', seq: 'n', remindedOn: 's' }
 };
@@ -358,8 +358,10 @@ export function createApp(store, opts = {}) {
   }
 
   async function tickWorkspace(store, now) {
+    const paused = new Set((await store.list('campaigns')).filter(c => c.status === 'מושהה').map(c => c.id));
     for (const p of await store.list('posts')) {
       if (p.status !== 'מתוזמן' || !p.at || Date.parse(p.at) > now) continue;
+      if (p.campaign && paused.has(p.campaign)) continue; // paused campaign: its posts wait
       // Pre-publish compliance gate: risky health claims wait for a person to fix or approve.
       if (env('COMPLIANCE') !== 'off' && !p.override) {
         const risk = checkText(p.text);
@@ -669,11 +671,23 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
       if (['generate', 'quick-campaign', 'plan'].includes(parts[1])) return send(res, 200, await runAi(store, user, ws, parts[1], b));
     }
 
+    if (parts[0] === 'campaigns' && parts[1] === 'order' && method === 'POST') {
+      const { items } = await readBody(req);
+      if (!Array.isArray(items) || items.length > 500) throw httpErr(400, 'בקשה לא תקינה');
+      const STATUSES = ['פעיל', 'מושהה', 'הסתיים'];
+      let n = 0;
+      for (const it of items) {
+        const c = await store.get('campaigns', String(it?.id || '')); if (!c) continue;
+        await store.put('campaigns', c.id, { ...c, order: ++n * 10, ...(STATUSES.includes(it.status) ? { status: it.status } : {}) });
+      }
+      return send(res, 200, { ok: true, updated: n });
+    }
+
     if (SCHEMA[parts[0]]) {
       const kind = parts[0], id = parts[1];
       const guard = b => { if (kind === 'leads' && b.next && !/^\d{4}-\d{2}-\d{2}$/.test(String(b.next))) throw httpErr(400, 'תאריך לא תקין'); return b; };
       if (method === 'POST' && !id) {
-        const defaults = { campaigns: { status: 'פעיל', spent: 0 }, posts: { status: 'מתוזמן' }, leads: { stage: 'חדש', created: new Date().toISOString().slice(0, 10) } }[kind];
+        const defaults = { campaigns: { status: 'פעיל', spent: 0, order: Date.now(), channels: [] }, posts: { status: 'מתוזמן' }, leads: { stage: 'חדש', created: new Date().toISOString().slice(0, 10) } }[kind];
         return send(res, 201, await store.put(kind, uid(), pick(kind, guard(await readBody(req)), defaults)));
       }
       if (id && method === 'PUT') {

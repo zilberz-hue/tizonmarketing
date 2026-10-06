@@ -338,6 +338,27 @@ assert.equal(leadsNow.find(l => l.name === 'זר').campaign, '');
   process.env.ANTHROPIC_API_URL = good;
 }
 
+// campaign ordering + pause (drag & drop board persists through one call)
+{
+  const mk = async (name) => (await call('POST', '/api/campaigns', { name })).data;
+  const [c1, c2, c3] = [await mk('א'), await mk('ב'), await mk('ג')];
+  assert.ok(c1.order < c3.order, 'new campaigns are appended');
+  const r = await call('POST', '/api/campaigns/order', { items: [{ id: c3.id, status: 'מושהה' }, { id: c1.id, status: 'פעיל' }, { id: c2.id, status: 'הסתיים' }, { id: 'ghost' }] });
+  assert.equal(r.data.updated, 3);
+  const cs = (await call('GET', '/api/state')).data.campaigns;
+  const by = id => cs.find(x => x.id === id);
+  assert.ok(by(c3.id).order < by(c1.id).order && by(c1.id).order < by(c2.id).order, 'order follows the request');
+  assert.deepEqual([by(c3.id).status, by(c1.id).status, by(c2.id).status], ['מושהה', 'פעיל', 'הסתיים']);
+  assert.equal((await call('POST', '/api/campaigns/order', { items: 'x' })).status, 400);
+  // a paused campaign holds its scheduled posts; resuming releases them
+  const pp = (await call('POST', '/api/posts', { campaign: c3.id, channel: 'Instagram', text: 'מושהה', at: new Date(Date.now() - 1000).toISOString() })).data;
+  await tick();
+  assert.equal((await call('GET', '/api/state')).data.posts.find(p => p.id === pp.id).status, 'מתוזמן', 'paused campaign does not publish');
+  await call('PUT', '/api/campaigns/' + c3.id, { status: 'פעיל' });
+  await tick();
+  assert.equal((await call('GET', '/api/state')).data.posts.find(p => p.id === pp.id).status, 'פורסם');
+}
+
 // work-plan checklist: shared, validated, returned in /state
 assert.equal((await call('POST', '/api/checklist', { key: 's1', done: true })).status, 200);
 assert.equal((await call('POST', '/api/checklist', { key: 'k1@2026-10-04', done: true })).status, 200);

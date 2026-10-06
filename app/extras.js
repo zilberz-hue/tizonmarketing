@@ -147,3 +147,49 @@ $('#install-btn')?.addEventListener('click', async () => { if (!installEvent) re
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
 
 function renderExtras() { renderWsSwitch(); renderCalendar(); }
+
+
+// ---------- Drag & drop (pointer based: works with mouse and touch) ----------
+// Press a handle, drag the card (a ghost follows the pointer), and the real card moves live between slots.
+function dragSort({ root, itemSel, handleSel, containerSel, onDrop }) {
+  root.addEventListener('pointerdown', e => {
+    const handle = e.target.closest(handleSel);
+    if (!handle || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const item = handle.closest(itemSel); if (!item) return;
+    e.preventDefault();
+    window.__dragging = true;
+    const rect = item.getBoundingClientRect(), dx = e.clientX - rect.left, dy = e.clientY - rect.top;
+    const ghost = item.cloneNode(true);
+    ghost.classList.add('drag-ghost');
+    Object.assign(ghost.style, { position: 'fixed', left: rect.left + 'px', top: rect.top + 'px', width: rect.width + 'px', pointerEvents: 'none', zIndex: 80 });
+    document.body.appendChild(ghost); item.classList.add('drag-source');
+    const move = ev => {
+      ghost.style.left = ev.clientX - dx + 'px'; ghost.style.top = ev.clientY - dy + 'px';
+      if (ev.clientY < 90) window.scrollBy(0, -16); else if (innerHeight - ev.clientY < 90) window.scrollBy(0, 16);
+      // Pick the nearest container by geometry (not by the element under the pointer: a sticky header may cover it).
+      const conts = root.matches(containerSel) ? [root] : [...root.querySelectorAll(containerSel)];
+      const dist = c => { const r = c.getBoundingClientRect(); return Math.hypot(Math.max(r.left - ev.clientX, 0, ev.clientX - r.right), Math.max(r.top - ev.clientY, 0, ev.clientY - r.bottom)); };
+      const cont = conts.sort((a, b) => dist(a) - dist(b))[0];
+      if (!cont) return;
+      const before = [...cont.children].filter(s => s !== item && s.matches(itemSel)).find(s => { const r = s.getBoundingClientRect(); return ev.clientY < r.top + r.height / 2; });
+      if (before) { if (item.nextElementSibling !== before) cont.insertBefore(item, before); }
+      else if (cont.lastElementChild !== item) cont.appendChild(item);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+      ghost.remove(); item.classList.remove('drag-source');
+      Promise.resolve(onDrop(item)).catch(err => alert(err.message)).finally(() => { window.__dragging = false; renderCampaigns(); });
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+  });
+}
+
+$('#camp-view')?.addEventListener('click', e => {
+  const v = e.target.dataset.view; if (!v) return;
+  campView = v; try { localStorage.setItem('tz-campview', v); } catch {}
+  renderCampaigns();
+});
+dragSort({ root: $('#campaign-list'), itemSel: '.item', handleSel: '.handle', containerSel: '#campaign-list',
+  onDrop: () => saveCampOrder([...document.querySelectorAll('#campaign-list > .item')].map(el => ({ id: el.dataset.id }))) });
+dragSort({ root: $('#campaign-board'), itemSel: '.kcard', handleSel: '.handle', containerSel: '.kcol',
+  onDrop: () => saveCampOrder([...document.querySelectorAll('#campaign-board .kcol')].flatMap(col => [...col.querySelectorAll(':scope > .kcard')].map(el => ({ id: el.dataset.id, status: col.dataset.status })))) });

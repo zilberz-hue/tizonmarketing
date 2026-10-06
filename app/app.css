@@ -83,6 +83,8 @@ input[dir=ltr],textarea[dir=ltr]{text-align:left}
 .chsteps .task.done .num{background:var(--brand2)}
 .phase[id]{scroll-margin-top:90px}
 
+/* the [hidden] attribute must always win over display rules such as .panel{display:grid} */
+[hidden]{display:none!important}
 /* risk / compliance */
 .risk{border-radius:10px;padding:10px 12px;margin:8px 0;font-size:.9rem}
 .risk.high{background:#d3333314;border:1px solid #d33}.risk.med{background:#e0a8001a;border:1px solid #c98a00}
@@ -111,3 +113,18 @@ input[dir=ltr],textarea[dir=ltr]{text-align:left}
 #ws-switch{padding:6px 10px;border-radius:99px;max-width:160px}
 .ws-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}.ws-list li{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .ws-list button{background:var(--bg);border:1px solid #8886;border-radius:8px;padding:4px 10px;font:inherit;cursor:pointer;color:var(--fg)}
+
+/* campaigns: drag & drop list + board */
+.khead{display:flex;align-items:center;gap:10px}.khead h3{margin:0;flex:1}.khead b{flex:1}
+.handle{cursor:grab;touch-action:none;user-select:none;font-size:1.4rem;line-height:1;padding:6px 8px;border-radius:8px;background:var(--alt);color:var(--muted)}
+.handle:hover,.handle:focus-visible{color:var(--brand)}
+.movers{display:flex;gap:4px}.movers button{background:var(--alt);border:0;border-radius:8px;width:34px;height:34px;cursor:pointer;color:var(--fg)}.movers button:disabled{opacity:.3;cursor:default}
+.drag-source{opacity:.35;outline:2px dashed var(--brand)}
+.drag-ghost{opacity:.92;box-shadow:0 14px 34px #0005;background:var(--bg);border-radius:14px;rotate:1.2deg}
+.board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:start}
+.kcol{background:var(--alt);border-radius:14px;padding:10px;min-height:180px;display:flex;flex-direction:column;gap:10px}
+.kcol h3{margin:0 0 4px;font-size:1rem}
+.kcard{background:var(--bg);border:1px solid #8883;border-radius:12px;padding:10px;display:grid;gap:6px}
+.kcard .acts button{padding:4px 10px;font-size:.85rem}
+.empty-col{text-align:center;padding:24px 0;border:2px dashed #8884;border-radius:10px;margin:0}
+@media (max-width:800px){.board{grid-template-columns:1fr}}

@@ -67,7 +67,10 @@
       <label>6. מסר מרכזי והצעה <textarea name="message" rows="2"></textarea></label>
       <div class="bar"><button class="btn btn-sm" type="submit">שמירה</button><button type="button" class="link" id="cancel-campaign">ביטול</button></div>
     </form>
+    <div class="seg" id="camp-view" role="group" aria-label="תצוגת קמפיינים"><button type="button" data-view="list" class="on">רשימה</button><button type="button" data-view="board">לוח גרירה</button></div>
+    <p class="meta" id="camp-hint">גררו את ⠿ כדי לשנות סדר, או השתמשו בחצים ▲▼. בלוח גרירה אפשר להעביר קמפיין בין "פעיל", "מושהה" ו"הסתיים".</p>
     <div id="campaign-list"></div>
+    <div id="campaign-board" class="board" hidden></div>
   </section>
 
   <section id="content" class="tab">
