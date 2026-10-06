@@ -27,18 +27,66 @@ async function api(method, path, body) {
   if (!r.ok) throw new Error((d.error || 'שגיאה') + (d.detail ? ` (${d.detail})` : ''));
   return d;
 }
+// ---------- Progress meter (shown above everything, including open dialogs) ----------
+// Server-side AI work has no real percentage, so the bar follows an estimate that eases towards ~92% and jumps to
+// 100% when the work finishes. Steps we do ourselves (saving a banner, creating posts) report real progress via set().
+const mmss = s => s < 60 ? `${s} שנ׳` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+function progressDock() {
+  let d = document.getElementById('progress-dock');
+  if (!d) { d = document.createElement('div'); d.id = 'progress-dock'; d.className = 'pdock'; d.setAttribute('popover', 'manual'); document.body.appendChild(d); }
+  return d;
+}
+function startProgress({ label, est = 10000 }) {
+  const dock = progressDock(), el = document.createElement('div'), t0 = Date.now();
+  el.className = 'ptask'; el.setAttribute('role', 'progressbar'); el.setAttribute('aria-label', label); el.setAttribute('aria-valuemin', '0'); el.setAttribute('aria-valuemax', '100');
+  el.innerHTML = `<div class="phead"><b class="plabel">${esc(label)}</b><span class="ppct">0%</span></div><div class="ptrack"><div class="pfill"></div></div><div class="pfoot"><span class="pstage">מתחיל…</span><span class="ptime">0 שנ׳</span></div>`;
+  dock.appendChild(el);
+  try { dock.showPopover(); } catch { dock.classList.add('pfallback'); }
+  let manual = null, closed = false;
+  const paint = pct => {
+    pct = Math.max(0, Math.min(100, Math.round(pct)));
+    el.setAttribute('aria-valuenow', String(pct)); el.querySelector('.ppct').textContent = pct + '%'; el.querySelector('.pfill').style.width = pct + '%';
+  };
+  const tick = setInterval(() => {
+    const s = Math.round((Date.now() - t0) / 1000);
+    el.querySelector('.ptime').textContent = mmss(s);
+    paint(manual ?? 92 * (1 - Math.exp(-(Date.now() - t0) / (est / 2.3))));
+  }, 200);
+  const remove = delay => setTimeout(() => { el.remove(); if (!dock.children.length) try { dock.hidePopover(); } catch {} }, delay);
+  paint(2);
+  return {
+    stage: txt => { el.querySelector('.pstage').textContent = txt; },
+    set: pct => { manual = pct; paint(pct); },
+    done: txt => { if (closed) return; closed = true; clearInterval(tick); paint(100); el.classList.add('pdone'); el.querySelector('.pstage').textContent = txt || 'הושלם ✓'; remove(700); },
+    fail: msg => { if (closed) return; closed = true; clearInterval(tick); el.classList.add('pfail'); el.querySelector('.pstage').textContent = '❌ ' + String(msg).slice(0, 160); remove(5000); }
+  };
+}
+
 // AI calls can take a while. The server may answer { job } and finish in the background: poll until done.
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const AI_LABELS = {
+  '/ai/quick-campaign': ['בונה את הקמפיין', 25000], '/ai/plan': ['מתכנן לוח תוכן', 25000], '/ai/improve': ['משדרג את הטקסט', 9000], '/ai/generate': ['כותב פוסט', 9000],
+  '/ai/banner-copy': ['מנסח כותרות לבאנר', 9000], '/ai/image-prompt': ['כותב תיאור לתמונה', 6000], '/ai/image': ['יוצר תמונה', 30000], '/compliance/fix': ['מתקן את הניסוח', 9000], '/insights': ['מנתח את הנתונים', 12000]
+};
 async function aiCall(path, body) {
-  const r = await api('POST', path, body);
-  if (!r.job) return r;
-  for (let i = 0; i < 100; i++) {
-    await sleep(2000);
-    const j = await api('GET', '/jobs/' + r.job);
-    if (j.status === 'done') return j.result;
-    if (j.status === 'error') throw new Error(j.error || 'המשימה נכשלה');
-  }
-  throw new Error('המשימה לוקחת יותר מדי זמן. נסו שוב בעוד רגע');
+  const [label, est] = AI_LABELS[path] || ['מעבד', 10000];
+  const pr = startProgress({ label, est });
+  pr.stage('שולח בקשה…');
+  const slow = setTimeout(() => pr.stage('ה-AI עובד…'), 1200);
+  try {
+    const r = await api('POST', path, body);
+    if (!r.job) { pr.done(); return r; }
+    pr.stage('ממתין בתור…');
+    for (let i = 0; i < 100; i++) {
+      await sleep(2000);
+      const j = await api('GET', '/jobs/' + r.job);
+      if (j.status === 'running') pr.stage('ה-AI עובד…');
+      if (j.status === 'done') { pr.done(); return j.result; }
+      if (j.status === 'error') throw new Error(j.error || 'המשימה נכשלה');
+    }
+    throw new Error('המשימה לוקחת יותר מדי זמן. נסו שוב בעוד רגע');
+  } catch (e) { pr.fail(e.message === 'auth' ? 'נדרשת התחברות' : e.message); throw e; }
+  finally { clearTimeout(slow); }
 }
 const safe = fn => async (...a) => { try { await fn(...a); } catch (e) { if (e.message !== 'auth') alert(e.message); } };
 
@@ -392,14 +440,25 @@ async function launchQuick(form, asDraft) {
   })).filter(p => p.text && !isNaN(p.at));
   if (!posts.length) throw new Error('סמנו לפחות פוסט אחד');
   const dates = posts.map(p => p.at).sort((a, b) => a - b);
-  const camp = await api('POST', '/campaigns', {
-    name: f.get('name'), goal: f.get('goal'), audience: f.get('audience'), message: f.get('message'), budget: +f.get('budget') || 0,
-    channels: [...new Set(posts.map(p => p.channel))], start: ymd(dates[0]), end: ymd(dates[dates.length - 1])
-  });
-  await Promise.all(posts.map(p => api('POST', '/posts', { campaign: camp.id, channel: p.channel, text: p.text, image: p.image, at: p.at.toISOString(), status: asDraft ? 'טיוטה' : 'מתוזמן' })));
+  const pr = startProgress({ label: asDraft ? 'שומר טיוטות' : 'משגר את הקמפיין', est: 4000 });
+  pr.stage('יוצר את הקמפיין…'); pr.set(8);
+  let camp;
+  try {
+    camp = await api('POST', '/campaigns', {
+      name: f.get('name'), goal: f.get('goal'), audience: f.get('audience'), message: f.get('message'), budget: +f.get('budget') || 0,
+      channels: [...new Set(posts.map(p => p.channel))], start: ymd(dates[0]), end: ymd(dates[dates.length - 1])
+    });
+  } catch (e) { pr.fail(e.message); throw e; }
+  let created = 0;
+  try {
+    await Promise.all(posts.map(p => api('POST', '/posts', { campaign: camp.id, channel: p.channel, text: p.text, image: p.image, at: p.at.toISOString(), status: asDraft ? 'טיוטה' : 'מתוזמן' })
+      .then(() => { created++; pr.stage(`מוסיף פוסטים ללוח (${created}/${posts.length})`); pr.set(10 + 85 * created / posts.length); })));
+  } catch (e) { pr.fail(e.message); throw e; }
+  pr.set(97); pr.stage('מרענן…');
   $('#quick').close();
   await refresh();
   document.querySelector('[data-tab=content]').click();
+  pr.done(asDraft ? 'הטיוטות נשמרו ✓' : 'הקמפיין שוגר ✓');
   toast(asDraft ? `נשמרו ${posts.length} טיוטות` : `הקמפיין שוגר: ${posts.length} פוסטים מתוזמנים 🚀`);
 }
 
@@ -468,7 +527,7 @@ async function loadInsights(ai) {
   const list = $('#insights-list');
   list.innerHTML = '<li class="meta">מנתח…</li>';
   try {
-    const r = await aiCall('/insights', { ai });
+    const r = ai ? await aiCall('/insights', { ai }) : await api('POST', '/insights', { ai });
     list.innerHTML = r.insights.map(i => `<li>${esc(i)}</li>`).join('') || '<li class="meta">אין תובנות כרגע</li>';
     if (ai && !r.ai) toast('ניתוח AI לא זמין, מוצגות תובנות בסיסיות');
   } catch (e) { list.innerHTML = e.message === 'auth' ? '' : `<li class="meta">${esc(e.message)}</li>`; }

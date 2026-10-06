@@ -144,3 +144,15 @@ input[dir=ltr],textarea[dir=ltr]{text-align:left}
 .chip-btn.on{border-color:var(--brand);background:var(--bg);color:var(--brand);font-weight:700}
 .st-options{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.st-ai{background:var(--alt)}
 @media (max-width:760px){.studio-grid{grid-template-columns:1fr}.studio-preview{position:static}}
+
+/* progress meter (popover = top layer, so it is visible above open dialogs) */
+.pdock{position:fixed;inset:auto 0 18px 0;margin:0 auto;width:min(430px,92vw);border:0;background:transparent;padding:0;overflow:visible;flex-direction:column;gap:8px;pointer-events:none}
+.pdock:popover-open{display:grid}
+.pdock.pfallback{display:grid;z-index:2000}
+.ptask{pointer-events:auto;background:var(--bg);color:var(--fg);border:1px solid #8884;border-radius:14px;padding:12px 14px;box-shadow:0 10px 30px #0004;display:grid;gap:6px}
+.phead{display:flex;justify-content:space-between;align-items:baseline;gap:10px}.ppct{font-variant-numeric:tabular-nums;font-weight:700;color:var(--brand)}
+.ptrack{height:10px;border-radius:99px;background:var(--alt);overflow:hidden}
+.pfill{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--brand),var(--brand2));transition:width .25s ease-out}
+.pfoot{display:flex;justify-content:space-between;font-size:.82rem;color:var(--muted)}
+.ptask.pdone .pfill{background:var(--brand2)}.ptask.pdone .ppct{color:var(--brand2)}
+.ptask.pfail{border-color:#d33}.ptask.pfail .pfill{background:#d33}.ptask.pfail .pstage{color:#d33}
