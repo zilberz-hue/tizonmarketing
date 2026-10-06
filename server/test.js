@@ -503,6 +503,69 @@ await call('POST', '/api/checklist', { key: 's1', done: false });
 ck = (await call('GET', '/api/state')).data.checklist;
 assert.ok(!ck.s1 && ck['k1@2026-10-04']);
 
+// patient care: private records, consent-gated portal link, no names/health data in logs or notifications
+{
+  const mk = await call('POST', '/api/patients', { name: 'דנה כהן', phone: '0501234567', goal: 'ירידה במשקל', next: '2020-01-01' });
+  assert.equal(mk.status, 201); assert.ok(!('token' in mk.data));
+  const pid = mk.data.id;
+  assert.equal((await call('POST', '/api/patients', { name: '' })).status, 400);
+  assert.equal((await call('PUT', '/api/patients/' + pid, { next: 'tomorrow' })).status, 400);
+  assert.equal((await call('POST', `/api/patients/${pid}/link`, {})).status, 400, 'no link before consent');
+  assert.equal((await call('PUT', '/api/patients/' + pid, { consent: true })).data.consent, 1);
+  const lk = await call('POST', `/api/patients/${pid}/link`, {});
+  assert.equal(lk.status, 200); assert.match(lk.data.path, /^\/care\/\?w=main&p=[a-f0-9]{12}&t=[a-f0-9]{32}$/);
+  const q = lk.data.path.slice('/care/'.length);
+  assert.equal((await call('POST', `/api/patients/${pid}/link`, {})).data.path, lk.data.path, 'link is stable');
+  // staff entries: note stays private, measure and reply are visible to the patient
+  await call('POST', `/api/patients/${pid}/entries`, { type: 'note', text: 'הערה פנימית רגישה' });
+  await call('POST', `/api/patients/${pid}/entries`, { type: 'measure', weight: 82.5 });
+  assert.equal((await call('POST', `/api/patients/${pid}/entries`, { type: 'note' })).status, 400);
+  const before = mock2log.length;
+  const post = await fetch(base + '/api/care' + q, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ w: 'main', p: pid, t: lk.data.path.split('t=')[1], type: 'question', text: 'האם אפשר לשלב קפה?', weight: 81, energy: 9 }) });
+  assert.equal(post.status, 200);
+  const pv = await post.json();
+  assert.equal(pv.name, 'דנה כהן');
+  assert.ok(pv.entries.some(e => e.text === 'האם אפשר לשלב קפה?' && e.energy === 5), 'energy is clamped');
+  assert.ok(!JSON.stringify(pv).includes('הערה פנימית'), 'private notes never reach the patient');
+  assert.ok(pv.entries.some(e => e.weight === 82.5 && e.by === 'staff'));
+  await new Promise(r => setTimeout(r, 100));
+  const notes = JSON.stringify(mock2log.slice(before).filter(x => x.path === '/hook2').map(x => x.body.text));
+  assert.ok(notes.length > 4, 'portal message notifies the team');
+  assert.ok(notes.includes('דנה') && !notes.includes('כהן') && !notes.includes('קפה'), 'notification: first name only, no content');
+  // list + answer
+  let list = (await call('GET', '/api/patients')).data;
+  const row = list.find(x => x.id === pid);
+  assert.equal(row.open, 1); assert.equal(row.lastWeight, 81); assert.ok(row.hasLink && row.due);
+  const det = (await call('GET', '/api/patients/' + pid)).data;
+  const question = det.entries.find(e => e.type === 'question');
+  await call('POST', `/api/patients/${pid}/entries`, { type: 'reply', text: 'כוס אחת ביום בסדר.', replyTo: question.id });
+  assert.equal((await call('GET', '/api/patients')).data.find(x => x.id === pid).open, 0);
+  assert.ok((await (await fetch(base + '/api/care' + q + '&w=main')).json()).entries.some(e => e.type === 'reply'));
+  // follow-up reminder fires once, with the first name only
+  const b2 = mock2log.length; await tick(); await tick(); await new Promise(r => setTimeout(r, 100));
+  const rem = mock2log.slice(b2).filter(x => x.path === '/hook2' && /היום ליווי/.test(x.body.text || ''));
+  assert.equal(rem.length, 1, 'reminder fires exactly once'); assert.ok(rem[0].body.text.includes('דנה') && !rem[0].body.text.includes('כהן'));
+  // activity log: no names, no health content
+  const act2 = JSON.stringify((await call('GET', '/api/guide/activity?limit=200')).data);
+  assert.ok(!act2.includes('כהן') && !act2.includes('קפה') && !act2.includes('82.5') && act2.includes('נוסף מטופל'));
+  // bad / revoked / unconsented access is a uniform 404
+  const bad = await fetch(base + `/api/care?w=main&p=${pid}&t=${'0'.repeat(32)}`); assert.equal(bad.status, 404);
+  assert.equal((await fetch(base + `/api/care?w=main&p=${pid}`)).status, 404);
+  await call('POST', `/api/patients/${pid}/link`, { rotate: true });
+  assert.equal((await fetch(base + '/api/care' + q)).status, 404, 'rotating the link revokes the old one');
+  const lk2 = await call('POST', `/api/patients/${pid}/link`, {});
+  await call('POST', `/api/patients/${pid}/link`, { revoke: true });
+  assert.equal((await fetch(base + '/api/care' + lk2.data.path.slice('/care/'.length))).status, 404);
+  const lk3 = await call('POST', `/api/patients/${pid}/link`, {});
+  await call('PUT', '/api/patients/' + pid, { consent: false });
+  assert.equal((await fetch(base + '/api/care' + lk3.data.path.slice('/care/'.length))).status, 404, 'withdrawn consent closes the portal');
+  assert.equal((await fetch(base + '/api/patients')).status, 401);
+  // erasure
+  assert.equal((await call('DELETE', '/api/patients/' + pid)).status, 200);
+  assert.equal((await call('GET', '/api/patients/' + pid)).status, 404);
+  assert.equal((await call('GET', '/api/patients')).data.length, 0);
+}
+
 const del = await call('DELETE', '/api/posts/' + p.id);
 assert.equal(del.status, 200);
 console.log('all tests passed');

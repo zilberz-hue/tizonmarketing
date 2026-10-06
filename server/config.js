@@ -32,7 +32,8 @@ export const GROUPS = [
       { key: 'IMAGE_MODEL', label: 'מודל תמונות (אופציונלי)', placeholder: 'gpt-image-1' }
     ] },
   { id: 'business', title: '🏢 על העסק', desc: 'ה-AI ישתמש בזה כדי לכתוב בקול של העסק שלכם.', required: [],
-    fields: [{ key: 'BUSINESS_PROFILE', label: 'תיאור קצר של העסק', type: 'textarea', placeholder: 'מי אתם, מה אתם מציעים, באיזה טון לדבר, מה אסור לומר' }] },
+    fields: [{ key: 'BUSINESS_PROFILE', label: 'תיאור קצר של העסק', type: 'textarea', placeholder: 'מי אתם, מה אתם מציעים, באיזה טון לדבר, מה אסור לומר' },
+      { key: 'CONTACT_PHONE', label: 'טלפון להצגה למטופלים בפורטל (אופציונלי)', placeholder: '052-318-6262' }] },
   { id: 'facebook', title: '📘 פייסבוק', desc: 'פרסום אוטומטי לדף העסקי.', test: 'facebook', required: ['FB_PAGE_ID', 'FB_PAGE_TOKEN'],
     help: 'ב-developers.facebook.com ← Graph API Explorer ← הרשאות pages_manage_posts ו-pages_show_list ← טוקן דף.',
     fields: [

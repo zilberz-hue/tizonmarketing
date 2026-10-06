@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>הליווי האישי שלי | TizonHealth</title>
+<style>
+:root{--brand:#9a6a2a;--brand2:#5f8f08;--bg:#fffdf8;--fg:#2b2b2b;--alt:#f5efe3;--muted:#6b6256}
+@media (prefers-color-scheme:dark){:root{--bg:#1d1b17;--fg:#f1ece2;--alt:#2a2722;--muted:#b4ab9c;--brand:#d9a35b;--brand2:#9cc84a}}
+*{box-sizing:border-box}body{margin:0;font:16px/1.6 system-ui,'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--fg)}
+main{max-width:640px;margin:0 auto;padding:20px 16px 60px;display:grid;gap:14px}
+h1{margin:6px 0 0;font-size:1.5rem;color:var(--brand)}h2{margin:0 0 6px;font-size:1.15rem}
+.card{background:var(--alt);border-radius:14px;padding:16px;display:grid;gap:10px}
+.meta{color:var(--muted);font-size:.9rem}
+label{display:grid;gap:4px;font-size:.92rem;color:var(--muted)}
+input,textarea{font:inherit;padding:10px;border:1px solid #8886;border-radius:10px;background:var(--bg);color:var(--fg);width:100%}
+.scale{display:flex;gap:6px;flex-wrap:wrap}.scale label{position:relative;display:block}.scale input{position:absolute;opacity:0;inset:0;cursor:pointer}
+.scale span{display:inline-block;min-width:44px;text-align:center;padding:8px 0;border:2px solid #8886;border-radius:10px;color:var(--fg)}
+.scale input:checked+span{border-color:var(--brand);background:var(--bg);font-weight:700;color:var(--brand)}
+.scale input:focus-visible+span{outline:2px solid var(--brand2);outline-offset:2px}
+button{font:inherit;border:0;border-radius:10px;padding:11px 18px;background:var(--brand);color:#fff;cursor:pointer;font-weight:700}
+button.alt{background:none;border:2px solid var(--brand);color:var(--brand)}
+.err{color:#c33;font-weight:700}.ok{color:var(--brand2);font-weight:700}
+ul{list-style:none;margin:0;padding:0;display:grid;gap:10px}li{border-top:1px solid #8883;padding-top:8px}li:first-child{border:0;padding:0}
+.me{background:var(--bg);border-radius:10px;padding:8px 10px}.them{border-inline-start:4px solid var(--brand2);padding-inline-start:10px}
+</style>
+</head>
+<body>
+<main id="app"><p class="meta">טוען…</p></main>
+<script>
+const q = new URLSearchParams(location.search), key = { w: q.get('w') || 'main', p: q.get('p') || '', t: q.get('t') || '' };
+const $ = s => document.querySelector(s), esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const day = iso => new Date(iso).toLocaleDateString('he-IL', { day: 'numeric', month: 'long' });
+async function call(body) {
+  const url = '/api/care' + (body ? '' : '?' + new URLSearchParams(key));
+  const r = await fetch(url, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...key, ...body }) } : {});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || 'משהו השתבש, נסו שוב');
+  return d;
+}
+function spark(pts) {
+  if (pts.length < 2) return '';
+  const w = 300, h = 80, lo = Math.min(...pts), hi = Math.max(...pts), r = hi - lo || 1;
+  const xs = pts.map((_, i) => 12 + i * (w - 24) / (pts.length - 1)), ys = pts.map(v => h - 14 - (v - lo) / r * (h - 28));
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="גרף המשקל שלי"><polyline fill="none" stroke="var(--brand2)" stroke-width="3" points="${xs.map((x, i) => x.toFixed(1) + ',' + ys[i].toFixed(1)).join(' ')}"/>${xs.map((x, i) => `<circle cx="${x.toFixed(1)}" cy="${ys[i].toFixed(1)}" r="4" fill="var(--brand)"/>`).join('')}<text x="12" y="12" font-size="12" fill="currentColor">${pts[0]}</text><text x="${w - 12}" y="12" font-size="12" text-anchor="end" fill="currentColor">${pts[pts.length - 1]}</text></svg>`;
+}
+const scale = name => `<div class="scale">${[1, 2, 3, 4, 5].map(n => `<label><input type="radio" name="${name}" value="${n}"><span>${n}</span></label>`).join('')}</div>`;
+function render(d) {
+  const pts = d.entries.filter(e => e.weight != null).reverse().map(e => e.weight);
+  $('#app').innerHTML = `<h1>שלום ${esc(d.name.split(' ')[0])} 👋</h1>
+    ${d.goal ? `<p class="meta">המטרה שלנו: ${esc(d.goal)}</p>` : ''}${d.next ? `<p class="meta">הפגישה או השיחה הבאה: ${day(d.next)}</p>` : ''}
+    ${pts.length > 1 ? `<section class="card"><h2>ההתקדמות שלי</h2>${spark(pts)}</section>` : ''}
+    <form id="f" class="card"><h2>עדכון מהיר</h2>
+      <label>משקל היום (ק״ג, אופציונלי)<input name="weight" type="number" inputmode="decimal" step="0.1" min="20" max="400"></label>
+      <div><div class="meta">אנרגיה (1 נמוכה, 5 גבוהה)</div>${scale('energy')}</div>
+      <div><div class="meta">מצב רוח</div>${scale('mood')}</div>
+      <label>מה תרצו לספר או לשאול?<textarea name="text" rows="3" maxlength="1500"></textarea></label>
+      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="q" style="width:auto"> זו שאלה שאשמח לקבל עליה תשובה</label>
+      <button type="submit">שליחה</button><div id="msg" role="status" aria-live="polite"></div></form>
+    <section class="card"><h2>ההיסטוריה שלי</h2><ul>${d.entries.map(e => `<li class="${e.by === 'staff' ? 'them' : ''}"><div class="meta">${day(e.at)} · ${e.by === 'staff' ? (e.type === 'reply' ? 'תשובה מהצוות' : 'מדידה אצלנו') : e.type === 'question' ? 'השאלה שלי' : 'העדכון שלי'}${e.type === 'question' && !e.answered ? ' · ממתינה לתשובה' : ''}</div>
+      <div>${[e.weight != null ? 'משקל ' + e.weight : '', e.energy != null ? 'אנרגיה ' + e.energy + '/5' : '', e.mood != null ? 'מצב רוח ' + e.mood + '/5' : ''].filter(Boolean).join(' · ')}</div>${e.text ? `<div>${esc(e.text).replace(/\n/g, '<br>')}</div>` : ''}</li>`).join('') || '<li class="meta">עדיין אין עדכונים. אפשר להתחיל כבר עכשיו.</li>'}</ul></section>
+    <p class="meta">הקישור הזה אישי, אל תעבירו אותו הלאה. המידע נראה רק לכם ולצוות המלווה, ואפשר לבקש למחוק אותו בכל עת${d.contact ? ` (טלפון: <a href="tel:${esc(d.contact)}">${esc(d.contact)}</a>)` : ''}. זה אינו תחליף לייעוץ רפואי; במקרה דחוף פנו לרופא או למד״א.</p>`;
+  $('#f').addEventListener('submit', async e => {
+    e.preventDefault(); const f = new FormData(e.target), msg = $('#msg'), btn = e.target.querySelector('button');
+    const body = { weight: f.get('weight'), energy: f.get('energy'), mood: f.get('mood'), text: f.get('text'), type: f.get('q') ? 'question' : 'checkin' };
+    btn.disabled = true; msg.className = 'meta'; msg.textContent = 'שולח…';
+    try { render(await call(body)); $('#msg').className = 'ok'; $('#msg').textContent = 'תודה! קיבלנו ✅'; }
+    catch (err) { btn.disabled = false; msg.className = 'err'; msg.textContent = err.message; }
+  });
+}
+call().then(render).catch(err => { $('#app').innerHTML = `<h1>הקישור לא זמין</h1><p class="meta">${esc(err.message)}. אם זה נראה לכם לא נכון, פנו לצוות שיצור קישור חדש.</p>`; });
+</script>
+</body>
+</html>
