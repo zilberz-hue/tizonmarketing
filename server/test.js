@@ -33,7 +33,9 @@ const mock2 = http.createServer((req, res) => {
     if (req.url === '/anthropic-bad') { res.statusCode = 401; return res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } })); }
     if (req.url === '/anthropic') {
       const prompt = body.messages?.[0]?.content || '';
-      const text = prompt.includes('כותרות לבאנר') ? JSON.stringify([{ headline: 'כותרת א', sub: 'שורה א', cta: 'התקשרו' }, { headline: 'המוצר מרפא', sub: '', cta: 'עכשיו' }, { headline: 'כותרת ג', sub: '', cta: '' }])
+      const text = prompt.includes('ספר פעולה חי') ? '# ספר הפעולה שלנו\n## איך אנחנו עובדים\nעובדים לפי תוכנית שבועית, מפרסמים בפייסבוק ובטלגרם, ומודדים כל שבוע את עלות הליד. ## מה כדאי לעשות עכשיו: להמשיך.'
+        : prompt.includes('המדריך של מערכת השיווק') ? 'לחצו על הסטודיו ובחרו גודל. [[lesson:banner-studio]]'
+        : prompt.includes('כותרות לבאנר') ? JSON.stringify([{ headline: 'כותרת א', sub: 'שורה א', cta: 'התקשרו' }, { headline: 'המוצר מרפא', sub: '', cta: 'עכשיו' }, { headline: 'כותרת ג', sub: '', cta: '' }])
         : prompt.includes('Write ONE short English prompt') ? 'calm wellness background, soft light'
         : prompt.includes('ההנחיה של המשתמש') ? (prompt.includes('כתוב שזה מרפא') ? 'המוצר מרפא הכול' : 'טקסט משודרג')
         : prompt.includes('"posts"') ? JSON.stringify({ name: 'קמפיין AI', goal: 'מכירות', audience: 'קהל', message: 'מסר', posts: [{ day: 0, channel: 'Facebook', text: 'פוסט א' }, { day: 3, channel: 'Nope', text: 'פוסט ב' }] })
@@ -405,6 +407,90 @@ assert.equal(leadsNow.find(l => l.name === 'זר').campaign, '');
   assert.equal(huge.status, 502); assert.match(huge.data.error, /גדולה מדי/);
   assert.equal((await call('POST', '/api/ai/image', { prompt: 'x' })).status, 400);
   await call('PUT', '/api/settings', { clear: ['OPENAI_API_KEY'] });
+}
+
+// ---- Training: lessons, progress, activity log, knowledge book, tutor, manual ----
+{
+  const { LESSONS, TRACKS, RELEASES, MANUAL } = await import('./guide-content.js');
+  // content integrity: every track/release points at real lessons, every lesson has steps and a quiz
+  for (const t of Object.values(TRACKS)) for (const l of t.lessons) assert.ok(LESSONS[l], 'track lesson exists: ' + l);
+  for (const r of RELEASES) for (const l of r.lessons) assert.ok(LESSONS[l], `release ${r.id} lesson exists: ${l}`);
+  for (const [id, l] of Object.entries(LESSONS)) { assert.ok(l.steps.length >= 2 && l.quiz.length >= 1, 'lesson has steps and quiz: ' + id); for (const q of l.quiz) assert.ok(q.o[q.a] && q.why, 'quiz answer valid: ' + id); }
+  assert.equal(new Set(RELEASES.map(r => r.id)).size, RELEASES.length, 'release ids are unique');
+  // the generated manual file is in sync with the source
+  const fsm = await import('node:fs'); const { manualMarkdown } = await import('./guide-content.js');
+  assert.equal(fsm.readFileSync(new URL('../docs/הוראות-הפעלה.md', import.meta.url), 'utf8'), manualMarkdown(), 'run `npm run manual` after editing guide-content.js');
+  assert.ok(MANUAL.length >= 10);
+
+  const adminTok = token;
+  const content = (await call('GET', '/api/guide/content')).data;
+  assert.ok(content.lessons.welcome && content.tracks.chief.lessons.includes('agency') && content.releases.length);
+
+  // progress per user, default tracks, team view for admins
+  let me = (await call('GET', '/api/guide/me')).data; assert.equal(me.track, 'chief');
+  assert.equal((await call('POST', '/api/guide/progress', { lesson: 'nope' })).status, 400);
+  assert.equal((await call('POST', '/api/guide/progress', { lesson: 'welcome', score: 100 })).status, 200);
+  me = (await call('GET', '/api/guide/me')).data; assert.equal(me.done.welcome.score, 100);
+  const team = (await call('GET', '/api/guide/team')).data;
+  const mine = team.find(u => u.email === 'a@b.co'); assert.equal(mine.done, 1); assert.equal(mine.total, TRACKS.chief.lessons.length);
+  assert.equal((await call('PUT', '/api/guide/track', { email: 'member@b.co', track: 'chief' })).status, 200);
+  assert.equal((await call('PUT', '/api/guide/track', { email: 'member@b.co', track: 'zzz' })).status, 400);
+  await call('POST', '/api/login', { email: 'member@b.co', password: 'password123' });
+  assert.equal((await call('GET', '/api/guide/me')).data.track, 'chief', 'the owner can assign the chief-campaigner track');
+  assert.equal((await call('GET', '/api/guide/team')).status, 403);
+  assert.equal((await call('PUT', '/api/guide/track', { email: 'a@b.co', track: 'basic' })).status, 403);
+  const memberTok = token;
+  token = adminTok;
+
+  // activity log: records what happened, in plain Hebrew, never secrets
+  const act = (await call('GET', '/api/guide/activity?limit=200')).data;
+  assert.ok(act.some(e => e.text.startsWith('נוצר קמפיין')) && act.some(e => e.type === 'settings.update') && act.some(e => e.type === 'academy.lesson'));
+  assert.ok(act.some(e => e.type === 'post.published'), 'system events are logged too');
+  const dump = JSON.stringify(act);
+  for (const secret of ['sk-img-1234', 'sk-test-1234', 're_abcd', 'SECRETXYZ', 'ADS' + 'TOKEN']) assert.ok(!dump.includes(secret), 'no secrets in the activity log: ' + secret);
+
+  // needs / decisions: stored, linked to lessons, author-only deletion
+  const need = await call('POST', '/api/guide/knowledge', { type: 'need', title: 'אנחנו צריכים באנר לחג', body: 'לפוסט הפתיחה' });
+  assert.equal(need.status, 201); assert.ok(need.data.related.some(r => r.id === 'banner-studio'), 'a banner need links to the banner lesson');
+  assert.equal((await call('POST', '/api/guide/knowledge', { type: 'decision', title: 'x' })).status, 400);
+  await call('POST', '/api/guide/knowledge', { type: 'decision', title: 'הערוץ המרכזי הוא פייסבוק' });
+  token = memberTok;
+  assert.equal((await call('DELETE', '/api/guide/knowledge/' + need.data.id)).status, 403, "members cannot delete someone else's entry");
+  const mineNote = (await call('POST', '/api/guide/knowledge', { type: 'note', title: 'הערה של נטלי' })).data;
+  assert.equal((await call('DELETE', '/api/guide/knowledge/' + mineNote.id)).status, 200, 'authors can delete their own');
+  token = adminTok;
+  let kn = (await call('GET', '/api/guide/knowledge')).data;
+  assert.ok(kn.items.some(i => i.title === 'אנחנו צריכים באנר לחג'));
+
+  // learning: AI rewrite of the knowledge book, and the deterministic weekly self-update
+  const learned = await call('POST', '/api/guide/learn', {});
+  assert.equal(learned.status, 200); assert.equal(learned.data.ai, true); assert.ok(learned.data.body.includes('## איך אנחנו עובדים'));
+  const lp = mock2log.filter(r => r.path === '/anthropic').pop().body.messages[0].content;
+  assert.ok(lp.includes('אנחנו צריכים באנר לחג') && lp.includes('הערוץ המרכזי הוא פייסבוק'), 'the prompt carries the needs and decisions');
+  kn = (await call('GET', '/api/guide/knowledge')).data; assert.equal(kn.playbook.ai, true);
+  await tick(Date.now() + 8 * 864e5);
+  kn = (await call('GET', '/api/guide/knowledge')).data;
+  assert.equal(kn.playbook.by, 'system'); assert.equal(kn.playbook.ai, false);
+  assert.ok(kn.playbook.body.includes('אנחנו צריכים באנר לחג') && kn.playbook.body.includes('## שינויים אחרונים'), 'the knowledge book rewrote itself from what happened');
+
+  // tutor: grounded answer with lesson links; keyword fallback without an AI key
+  const asked = (await call('POST', '/api/guide/ask', { question: 'איך יוצרים באנר?' })).data;
+  assert.equal(asked.ai, true); assert.ok(asked.lessons.some(l => l.id === 'banner-studio')); assert.ok(!asked.answer.includes('[[lesson'));
+  const ap = mock2log.filter(r => r.path === '/anthropic').pop().body.messages[0].content;
+  assert.ok(ap.includes('banner-studio') && ap.includes('אנחנו צריכים באנר לחג'), 'the tutor is grounded in lessons and our decisions');
+  await call('PUT', '/api/settings', { clear: ['ANTHROPIC_API_KEY'] });
+  const offline = (await call('POST', '/api/guide/ask', { question: 'איך יוצרים באנר?' })).data;
+  assert.equal(offline.ai, false); assert.equal(offline.lessons[0].id, 'banner-studio'); assert.ok(offline.answer.includes('השלבים'));
+  assert.equal((await call('POST', '/api/guide/ask', { question: '' })).status, 400);
+  await call('PUT', '/api/settings', { values: { ANTHROPIC_API_KEY: 'sk-test-1234' } });
+
+  // operating manual download: static sections + live knowledge and configuration
+  const manual = await fetch(base + '/api/guide/manual', { headers: { authorization: 'Bearer ' + adminTok } });
+  assert.equal(manual.status, 200); assert.match(manual.headers.get('content-type'), /markdown/);
+  const md = await manual.text();
+  assert.ok(md.startsWith('# הוראות הפעלה') && md.includes('## התצורה הנוכחית') && md.includes('אנחנו צריכים באנר לחג') && md.includes('## מה חדש'));
+  assert.ok(!md.includes('sk-test-1234'), 'the manual never contains secrets');
+  assert.equal((await fetch(base + '/api/guide/manual')).status, 401);
 }
 
 // work-plan checklist: shared, validated, returned in /state

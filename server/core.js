@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { env, loadSettings, saveSettings, describeSettings, getMeta, setMeta, runWith, ctx } from './config.js';
 import { computeStats, ruleInsights, insightsPrompt, parseBullets } from './insights.js';
 import { checkText, fixPrompt } from './compliance.js';
+import { TRACKS, LESSONS, RELEASES, MANUAL, publicContent, searchLessons, manualMarkdown } from './guide-content.js';
 
 const SCHEMA = {
   campaigns: { name: 's', goal: 's', audience: 's', channels: 'a', budget: 'n', target: 'n', start: 's', end: 's', message: 's', spent: 'n', status: 's', fbCampaign: 's', impressions: 'n', clicks: 'n', order: 'n' },
@@ -121,6 +122,51 @@ const israelDate = (t = Date.now()) => new Intl.DateTimeFormat('sv', { timeZone:
 const israelHour = (t = Date.now()) => +new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jerusalem', hour: '2-digit', hour12: false }).format(t);
 const addDays = (ymd, n) => new Date(Date.parse(ymd + 'T12:00:00Z') + n * 864e5).toISOString().slice(0, 10);
 const FOLLOW_STEPS = [1, 3, 7]; // days after the previous contact
+// ---- Activity log: what was done, by whom, when. Never stores secrets or field values, only names and labels. ----
+const EVENT_TEXT = {
+  'campaigns.create': e => `נוצר קמפיין "${e.label}"`, 'campaigns.update': e => `עודכן קמפיין "${e.label}" (${(e.fields || []).join(', ')})`, 'campaigns.delete': e => `נמחק קמפיין "${e.label}"`, 'campaigns.reorder': () => 'שונה סדר הקמפיינים',
+  'posts.create': e => `נוסף פוסט ל-${e.channel || 'ערוץ'}: "${e.label}"`, 'posts.update': e => `עודכן פוסט "${e.label}" (${(e.fields || []).join(', ')})`, 'posts.delete': e => `נמחק פוסט "${e.label}"`,
+  'post.published': e => `פורסם פוסט ב-${e.channel}: "${e.label}"`, 'post.blocked': e => `פוסט נעצר בבדיקת תאימות: "${e.label}"`, 'post.failed': e => `פרסום נכשל ב-${e.channel}: "${e.label}"`,
+  'leads.create': e => `נוסף ליד "${e.label}"`, 'leads.update': e => `עודכן ליד "${e.label}" (${(e.fields || []).join(', ')})`, 'leads.delete': e => `נמחק ליד "${e.label}"`, 'leads.contacted': e => `נרשמה שיחה עם "${e.label}"`, 'lead.website': e => `ליד חדש מהאתר: "${e.label}"`,
+  'settings.update': e => `עודכנו הגדרות (${(e.fields || []).join(', ')})`, 'media.create': () => 'הועלתה תמונה או באנר', 'plan.tick': e => `${e.done ? 'סומנה' : 'בוטלה'} משימה בתוכנית העבודה (${e.label})`,
+  'workspace.create': e => `נוצרה סביבת עבודה "${e.label}"`, 'access.update': e => `עודכנו הרשאות של ${e.label}`, 'user.create': e => `נוסף איש צוות ${e.label}`,
+  'knowledge.add': e => `נרשם ${e.kind === 'need' ? 'צורך' : e.kind === 'decision' ? 'החלטה' : 'הערה'}: "${e.label}"`, 'academy.lesson': e => `הושלם שיעור "${e.label}" (${e.score}%)`
+};
+const describeEvent = e => (e.type.startsWith('ai.') ? `שימוש ב-AI (${e.type.slice(3)})` : (EVENT_TEXT[e.type]?.(e) || e.type));
+const labelOf = o => String(o?.name || o?.title || o?.text || o?.channel || '').replace(/\s+/g, ' ').slice(0, 60);
+async function logEvent(S, user, type, data = {}) {
+  try {
+    const clean = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 120) : Array.isArray(v) ? v.map(x => String(x).slice(0, 40)).slice(0, 12) : v]));
+    await S.put('activity', `${String(Date.now()).padStart(13, '0')}-${crypto.randomBytes(3).toString('hex')}`, { type, by: user?.email || 'system', name: user?.name || '', at: new Date().toISOString(), ...clean });
+  } catch (e) { console.error('activity:', e.message); }
+}
+const recentEvents = async (S, n = 60) => (await S.list('activity')).sort((a, b) => (a.id < b.id ? 1 : -1)).slice(0, n);
+
+// Deterministic knowledge book: used by the weekly auto-update and when no AI key is configured.
+function fallbackPlaybook({ stats, events, needs, prev }) {
+  const byChannel = {};
+  for (const e of events) if (e.type === 'post.published' && e.channel) byChannel[e.channel] = (byChannel[e.channel] || 0) + 1;
+  const used = {};
+  for (const e of events) { const k = e.type.split('.')[0]; used[k] = (used[k] || 0) + 1; }
+  const best = stats.campaigns.filter(c => c.cpl !== null && c.spent > 0).sort((a, b) => a.cpl - b.cpl)[0];
+  const lines = [
+    '# ספר הפעולה שלנו', `_עודכן ${new Date().toLocaleDateString('he-IL')} (נוצר מהפעילות, הנתונים וההחלטות)_`, '',
+    '## איך אנחנו עובדים',
+    `- קמפיינים פעילים: ${stats.campaigns.filter(c => c.status === 'פעיל').length} מתוך ${stats.campaigns.length}. לידים בסך הכול: ${stats.leadsTotal}. פוסטים שפורסמו השבוע: ${stats.publishedWeek}.`,
+    Object.keys(byChannel).length ? `- ערוצים שפורסם בהם לאחרונה: ${Object.entries(byChannel).map(([c, n]) => `${c} (${n})`).join(', ')}.` : '- עדיין לא פורסמו פוסטים אוטומטית.',
+    `- פעילות אחרונה לפי תחום: ${Object.entries(used).map(([k, n]) => `${k} ${n}`).join(', ') || 'אין'}.`, '',
+    '## מה עבד',
+    best ? `- הקמפיין הכי משתלם: "${best.name}" (₪${Math.round(best.cpl)} לליד).` : '- עדיין אין מספיק נתונים על עלות לליד.',
+    stats.topPost ? `- הפוסט עם הכי הרבה אינטראקציה: "${stats.topPost.text}" (${stats.topPost.channel}).` : '- אין עדיין נתוני אינטראקציה.', '',
+    '## החלטות וצרכים שהוגדרו',
+    ...(needs.length ? needs.map(n => `- **${n.type === 'decision' ? 'החלטה' : n.type === 'need' ? 'צורך' : 'הערה'}:** ${n.title}${n.body ? ` — ${String(n.body).slice(0, 160)}` : ''}`) : ['- עדיין לא נרשמו. אפשר להוסיף בכרטיס "אנחנו צריכים / החלטנו".']), '',
+    '## שינויים אחרונים (נרשמו אוטומטית)',
+    ...(events.slice(0, 12).map(e => `- ${String(e.at).slice(0, 10)}: ${describeEvent(e)}`)), '',
+    '## מה כדאי לעשות עכשיו', ...ruleInsights(stats).slice(0, 4).map(i => `- ${i}`)
+  ];
+  return lines.join('\n');
+}
+
 const oneLine = s => String(s || '').replace(/[\r\n]+/g, ' ').slice(0, 120);
 
 async function onNewLead(lead) {
@@ -364,6 +410,19 @@ export function createApp(store, opts = {}) {
     return { posts, campaigns };
   }
 
+  // The knowledge book rewrites itself once a week from what happened (deterministic, no AI call inside a scheduled
+  // function). The "🧠 עדכנו את הידע" button uses AI when a key exists.
+  async function selfLearn(S, now) {
+    const meta = await getMeta(S);
+    if (now - (Date.parse(meta.lastLearn) || 0) < 7 * 864e5) return;
+    const events = await recentEvents(S, 150);
+    if (!events.length) return;
+    await aiTasks.learn(S, { auto: true }, { user: 'system' }, true);
+    await setMeta(S, { lastLearn: new Date(now).toISOString() });
+    const all = (await S.list('activity')).sort((a, b) => (a.id < b.id ? 1 : -1));
+    for (const e of all.slice(800)) await S.del('activity', e.id); // keep the most recent ~800 events
+  }
+
   async function tickWorkspace(store, now) {
     const paused = new Set((await store.list('campaigns')).filter(c => c.status === 'מושהה').map(c => c.id));
     for (const p of await store.list('posts')) {
@@ -373,6 +432,7 @@ export function createApp(store, opts = {}) {
       if (env('COMPLIANCE') !== 'off' && !p.override) {
         const risk = checkText(p.text);
         if (risk.level === 'high') {
+          await logEvent(store, null, 'post.blocked', { id: p.id, label: labelOf(p), channel: p.channel });
           await store.put('posts', p.id, { ...p, status: 'ממתין לבדיקה', error: 'ניסוח עלול להיחשב הבטחה רפואית: ' + risk.findings.filter(f => f.level === 'high').map(f => f.match).join(', ') });
           await notify(`🛑 פוסט ל-${p.channel} נעצר לבדיקה (ניסוח רפואי בעייתי):\\n${p.text.slice(0, 200)}`, 'post.blocked');
           continue;
@@ -384,11 +444,12 @@ export function createApp(store, opts = {}) {
         await store.put('posts', p.id, r
           ? { ...p, status: 'פורסם', via: r.via, ref: r.ref, publishedAt: new Date().toISOString(), error: '' }
           : { ...p, status: 'ידני', error: 'אין חיבור לערוץ – יש לפרסם ידנית' });
+        if (r) await logEvent(store, null, 'post.published', { id: p.id, label: labelOf(p), channel: p.channel });
         if (!r) await notify(`⏰ פוסט ל-${p.channel} ממתין לפרסום ידני:\\n${p.text.slice(0, 200)}`, 'post.manual');
       } catch (e) {
         const attempts = (p.attempts || 0) + 1;
         await store.put('posts', p.id, { ...p, attempts, error: e.message, status: attempts >= 3 ? 'נכשל' : 'מתוזמן', at: attempts >= 3 ? p.at : new Date(now + attempts * 5 * 60e3).toISOString() });
-        if (attempts >= 3) await notify(`❌ פרסום ל-${p.channel} נכשל: ${e.message}`, 'post.failed');
+        if (attempts >= 3) { await logEvent(store, null, 'post.failed', { id: p.id, label: labelOf(p), channel: p.channel }); await notify(`❌ פרסום ל-${p.channel} נכשל: ${e.message}`, 'post.failed'); }
       }
     }
     const today = israelDate(now), hourNow = israelHour(now);
@@ -405,6 +466,7 @@ export function createApp(store, opts = {}) {
         await notify(`🔔 היום לחזור אל ${oneLine(l.name)} ${l.phone || ''}${wa ? `\\n💬 ${wa}` : ''}`, 'lead.followup', { lead: l });
       }
     }
+    await selfLearn(store, now).catch(e => console.error('learn:', e.message));
     await syncMetrics(store, now).catch(e => console.error('metrics:', e.message));
     await digest(store, now).catch(e => console.error('digest:', e.message));
   }
@@ -506,6 +568,68 @@ ${env('BUSINESS_PROFILE') ? 'Business: ' + env('BUSINESS_PROFILE').slice(0, 300)
       await base.put('media', id, { ws: who.ws, type: 'image/jpeg', data: b64, created: new Date().toISOString() });
       return { id, url: `/api/media/${id}` };
     },
+    // Rewrites the living knowledge book from activity, results and decisions.
+    async learn(S, b, who, deterministic = false) {
+      const [events, stats, kn] = await Promise.all([recentEvents(S, 120), computeStats(S), S.list('knowledge')]);
+      const needs = kn.filter(k => k.id !== 'playbook' && k.type).sort((a, c) => (a.id < c.id ? 1 : -1)).slice(0, 40);
+      const prev = kn.find(k => k.id === 'playbook')?.body || '';
+      let body = '', ai = false;
+      if (!deterministic && env('ANTHROPIC_API_KEY')) {
+        body = (await claude(`אתה כותב "ספר פעולה חי" בעברית עבור צוות שיווק של עסק. החומר למטה הוא כל מה שידוע. כתוב ב-Markdown, עד 450 מילים, עם הכותרות: "איך אנחנו עובדים", "מה עבד", "החלטות וצרכים שהוגדרו", "שינויים אחרונים", "מה כדאי לעשות עכשיו" (3 פעולות קונקרטיות).
+כללים: רק לפי החומר, בלי להמציא נתונים, החלטות או מספרים. אם אין מספיק נתונים כתבו זאת. שמרו מהספר הקודם את מה שעדיין נכון. בלי הבטחות רפואיות.
+${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0, 400) + '\n' : ''}ספר קודם:
+${prev.slice(0, 3000) || '(אין)'}
+
+נתונים: ${JSON.stringify({ campaigns: stats.campaigns.map(c => ({ name: c.name, status: c.status, spent: c.spent, leads: c.leads, cpl: c.cpl })), leadsWeek: stats.leadsWeek, publishedWeek: stats.publishedWeek, topPost: stats.topPost, blocked: stats.blocked })}
+
+פעילות אחרונה:
+${events.slice(0, 60).map(e => `- ${String(e.at).slice(0, 10)} ${e.name || e.by}: ${describeEvent(e)}`).join('\n') || '(אין)'}
+
+צרכים והחלטות:
+${needs.map(n => `- [${n.type}] ${n.title}: ${String(n.body || '').slice(0, 200)}`).join('\n') || '(אין)'}
+
+עדכוני מערכת אחרונים:
+${RELEASES.slice(0, 4).map(r => `- ${r.date} ${r.title}: ${r.summary}`).join('\n')}`, 2200)).trim();
+        ai = body.length > 80;
+      }
+      if (!ai) body = fallbackPlaybook({ stats, events, needs, prev });
+      await S.put('knowledge', 'playbook', { type: 'playbook', title: 'ספר הפעולה', body, updated: new Date().toISOString(), by: who.user, ai });
+      return { body, ai };
+    },
+    // The in-app tutor: answers from lessons, the manual, the knowledge book, decisions and recent activity.
+    async ask(S, b, who) {
+      const question = String(b.question || '').trim().slice(0, 500);
+      if (question.length < 2) throw httpErr(400, 'כתבו שאלה');
+      const hits = searchLessons(question, 3);
+      if (!env('ANTHROPIC_API_KEY')) {
+        const top = hits[0] && LESSONS[hits[0].id];
+        return { ai: false, lessons: hits, answer: top
+          ? `מצאתי שיעור מתאים: "${top.title}".\n${top.intro}\n\nהשלבים:\n${top.steps.map((st, i) => `${i + 1}. ${st.t}: ${st.d}`).join('\n')}\n\n(לתשובות חופשיות חברו מפתח AI בהגדרות.)`
+          : 'לא מצאתי שיעור מתאים. נסו לנסח אחרת, או חברו מפתח AI בהגדרות לתשובות חופשיות.' };
+      }
+      const kn = await S.list('knowledge');
+      const play = kn.find(k => k.id === 'playbook')?.body || '';
+      const needs = kn.filter(k => k.id !== 'playbook' && k.type).sort((a, c) => (a.id < c.id ? 1 : -1)).slice(0, 15);
+      const events = await recentEvents(S, 15);
+      const q = new Set(question.toLowerCase().split(/[^א-תa-z0-9]+/).filter(w => w.length > 2));
+      const sections = MANUAL.filter(m => [...q].some(w => (m.title + m.body).toLowerCase().includes(w))).slice(0, 3);
+      const answer = (await claude(`אתה המדריך של מערכת השיווק, ומלמד את הקמפיינרית הראשית ואת הבעלים. ענה בעברית, קצר ומעשי, צעד אחרי צעד, רק לפי החומר שלמטה. אם התשובה לא בחומר, אמור שאין מידע ושאל מה חסר. אל תמציא כפתורים או תכונות. אם שיעור רלוונטי, הוסף בסוף [[lesson:מזהה]].
+שיעורים מתאימים:
+${hits.map(h => `- ${h.id}: ${LESSONS[h.id].title}. ${LESSONS[h.id].intro} שלבים: ${LESSONS[h.id].steps.map(st => st.t + ' - ' + st.d).join(' | ')}`).join('\n') || '(אין התאמה)'}
+פרקים מספר ההפעלה:
+${sections.map(m => `## ${m.title}\n${m.body.slice(0, 900)}`).join('\n\n') || '(אין)'}
+ספר הידע שלנו:
+${play.slice(0, 2500) || '(עדיין ריק)'}
+צרכים והחלטות:
+${needs.map(n => `- [${n.type}] ${n.title}: ${String(n.body || '').slice(0, 160)}`).join('\n') || '(אין)'}
+פעילות אחרונה:
+${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
+עדכוני מערכת: ${RELEASES.slice(0, 3).map(r => `${r.title} (${r.summary})`).join('; ')}
+
+שאלה: ${question}`, 900)).trim();
+      const ids = [...new Set([...answer.matchAll(/\[\[lesson:([\w-]+)\]\]/g)].map(m => m[1]).filter(id => LESSONS[id]))];
+      return { ai: true, answer: answer.replace(/\[\[lesson:[\w-]+\]\]/g, '').trim(), lessons: [...new Set([...ids, ...hits.map(h => h.id)])].slice(0, 3).map(id => ({ id, title: LESSONS[id].title })) };
+    },
     async fix(S, b) {
       const text = String(b.text || '').slice(0, 4000);
       const fixed = await claude(fixPrompt(text, checkText(text).findings, env('BUSINESS_PROFILE')), 800);
@@ -519,8 +643,9 @@ ${env('BUSINESS_PROFILE') ? 'Business: ' + env('BUSINESS_PROFILE').slice(0, 300)
   };
 
   async function runAi(S, user, ws, kind, params) {
-    if (!opts.startJob || !(env('ANTHROPIC_API_KEY') || env('OPENAI_API_KEY'))) return aiTasks[kind](S, params, { ws, user: user.email });
+    if (!opts.startJob || !(env('ANTHROPIC_API_KEY') || env('OPENAI_API_KEY'))) { await logEvent(S, user, `ai.${kind}`); return aiTasks[kind](S, params, { ws, user: user.email }); }
     const id = crypto.randomBytes(12).toString('hex');
+    await logEvent(S, user, `ai.${kind}`);
     const rec = { ws, kind, params, user: user.email, status: 'pending', created: new Date().toISOString() };
     await base.put('jobs', id, rec);
     try { await opts.startJob(id); }
@@ -566,6 +691,7 @@ ${env('BUSINESS_PROFILE') ? 'Business: ' + env('BUSINESS_PROFILE').slice(0, 300)
         const cid = String(b.campaign || '').slice(0, 40);
         const attributed = cid && await LS.get('campaigns', cid) ? cid : '';
         const lead = await LS.put('leads', uid(), pick('leads', { name: b.name, phone: b.phone, email: b.email, note: b.message, campaign: attributed, variant: /^[A-Za-z0-9]{1,10}$/.test(String(b.v || '')) ? String(b.v) : '', next: env('FOLLOWUP') !== 'off' ? addDays(israelDate(), 1) : '', seq: 0 }, { created: new Date().toISOString().slice(0, 10), stage: 'חדש', value: 0 }));
+        await logEvent(LS, { email: 'visitor' }, 'lead.website', { id: lead.id, label: labelOf(lead) });
         await onNewLead(lead);
       });
       return send(res, 200, { ok: true }, cors);
@@ -605,6 +731,7 @@ ${env('BUSINESS_PROFILE') ? 'Business: ' + env('BUSINESS_PROFILE').slice(0, 300)
         const name = String((await readBody(req)).name || '').trim().slice(0, 80);
         if (!name) throw httpErr(400, 'נא להזין שם');
         const w = await store.put('workspaces', uid(), { name, created: new Date().toISOString() });
+        await logEvent(store, user, 'workspace.create', { label: name });
         return send(res, 201, { id: w.id, name });
       }
       if (method === 'PUT' && parts[1]) {
@@ -626,6 +753,7 @@ ${env('BUSINESS_PROFILE') ? 'Business: ' + env('BUSINESS_PROFILE').slice(0, 300)
         const list = (Array.isArray(workspaces) ? workspaces : []).filter(id => known.has(id));
         if (!(await store.getUser(String(email || '').toLowerCase()))) throw httpErr(404, 'משתמש לא נמצא');
         await store.put('access', String(email).toLowerCase(), { workspaces: list });
+        await logEvent(store, user, 'access.update', { label: String(email) });
         return send(res, 200, { ok: true });
       }
     }
@@ -638,6 +766,7 @@ ${env('BUSINESS_PROFILE') ? 'Business: ' + env('BUSINESS_PROFILE').slice(0, 300)
         if (!/^[^\s@/]+@[^\s@/]+\.[^\s@/]+$/.test(email || '') || String(password || '').length < 8) throw httpErr(400, 'אימייל תקין וסיסמה של 8 תווים לפחות');
         try { await store.addUser(email.toLowerCase(), String(name || '').slice(0, 100), hashPw(String(password)), role === 'admin' ? 'admin' : 'member'); }
         catch (e) { throw e.code === 'EXISTS' ? httpErr(409, 'המשתמש כבר קיים') : e; }
+        await logEvent(store, user, 'user.create', { label: String(email) });
         if (role !== 'admin' && Array.isArray(workspaces)) {
           const known = new Set((await listWorkspaces()).map(w => w.id));
           await store.put('access', email.toLowerCase(), { workspaces: workspaces.filter(id => known.has(id)) });
@@ -657,6 +786,7 @@ ${env('BUSINESS_PROFILE') ? 'Business: ' + env('BUSINESS_PROFILE').slice(0, 300)
       if (!okMagic) throw httpErr(400, 'קובץ התמונה פגום');
       const id = crypto.randomBytes(12).toString('hex');
       await base.put('media', id, { ws, type: m[1], data: m[2], created: new Date().toISOString() });
+      await logEvent(store, user, 'media.create');
       return send(res, 201, { id, url: `/api/media/${id}` });
     }
 
@@ -681,7 +811,9 @@ ${env('BUSINESS_PROFILE') ? 'Business: ' + env('BUSINESS_PROFILE').slice(0, 300)
     if (parts[0] === 'leads' && parts[1] && parts[2] === 'contacted' && method === 'POST') {
       const l = await store.get('leads', parts[1]); if (!l) throw httpErr(404, 'לא נמצא');
       const seq = (l.seq || 0) + 1, gap = FOLLOW_STEPS[seq];
-      return send(res, 200, await store.put('leads', l.id, { ...l, seq, next: gap ? addDays(israelDate(), gap) : '', remindedOn: '', stage: l.stage === 'חדש' ? 'בטיפול' : l.stage }));
+      const advanced = await store.put('leads', l.id, { ...l, seq, next: gap ? addDays(israelDate(), gap) : '', remindedOn: '', stage: l.stage === 'חדש' ? 'בטיפול' : l.stage });
+      await logEvent(store, user, 'leads.contacted', { id: l.id, label: labelOf(l) });
+      return send(res, 200, advanced);
     }
 
     if (parts[0] === 'checklist' && method === 'POST') {
@@ -693,6 +825,7 @@ ${env('BUSINESS_PROFILE') ? 'Business: ' + env('BUSINESS_PROFILE').slice(0, 300)
         d[key] = new Date().toISOString();
       } else delete d[key];
       await store.put('checklist', 'main', { done: d });
+      await logEvent(store, user, 'plan.tick', { label: String(key), done: !!done });
       return send(res, 200, { done: d });
     }
 
@@ -702,6 +835,7 @@ ${env('BUSINESS_PROFILE') ? 'Business: ' + env('BUSINESS_PROFILE').slice(0, 300)
       if (method === 'PUT' && !parts[1]) {
         const b = await readBody(req);
         ctx().overrides = await saveSettings(store, ws, b.values && typeof b.values === 'object' ? b.values : {}, b.clear);
+        await logEvent(store, user, 'settings.update', { fields: [...Object.entries(b.values && typeof b.values === 'object' ? b.values : {}).filter(([, v]) => String(v || '').trim()).map(([k]) => k), ...(Array.isArray(b.clear) ? b.clear.map(k => `-${k}`) : [])] });
         return send(res, 200, { groups: describeSettings() });
       }
       if (method === 'POST' && parts[1] === 'test') {
@@ -717,6 +851,77 @@ ${env('BUSINESS_PROFILE') ? 'Business: ' + env('BUSINESS_PROFILE').slice(0, 300)
       const j = /^[a-f0-9]{24}$/.test(parts[1]) ? await base.get('jobs', parts[1]) : null;
       if (!j || j.ws !== ws || (j.user !== user.email && user.role !== 'admin')) throw httpErr(404, 'לא נמצא');
       return send(res, 200, { status: j.status, ...(j.status === 'done' ? { result: j.result } : {}), ...(j.status === 'error' ? { error: j.error } : {}) });
+    }
+
+    if (parts[0] === 'guide') {
+      const sub = parts[1];
+      const rec = async email => (await base.get('academy', email)) || {};
+      const trackOf = (u, r) => (TRACKS[r.track] ? r.track : u.role === 'admin' ? 'chief' : 'basic');
+      if (sub === 'content' && method === 'GET') return send(res, 200, publicContent());
+      if (sub === 'me' && method === 'GET') { const r = await rec(user.email); return send(res, 200, { track: trackOf(user, r), done: r.done || {}, seenRelease: r.seenRelease || '' }); }
+      if (sub === 'progress' && method === 'POST') {
+        const { lesson, score } = await readBody(req);
+        if (!LESSONS[lesson]) throw httpErr(400, 'שיעור לא מוכר');
+        const r = await rec(user.email), sc = Math.max(0, Math.min(100, Math.round(+score || 0)));
+        const done = { ...(r.done || {}), [lesson]: { at: new Date().toISOString(), score: sc } };
+        await base.put('academy', user.email, { ...r, done, lastActive: new Date().toISOString() });
+        await logEvent(store, user, 'academy.lesson', { label: LESSONS[lesson].title, score: sc });
+        return send(res, 200, { done });
+      }
+      if (sub === 'seen' && method === 'POST') { const r = await rec(user.email); await base.put('academy', user.email, { ...r, seenRelease: RELEASES[0].id }); return send(res, 200, { seenRelease: RELEASES[0].id }); }
+      if (sub === 'team' && method === 'GET') {
+        if (user.role !== 'admin') throw httpErr(403, 'למנהלים בלבד');
+        return send(res, 200, await Promise.all((await base.listUsers()).map(async u => {
+          const r = await rec(u.email), tr = trackOf(u, r), ids = TRACKS[tr].lessons, done = ids.filter(id => r.done?.[id]);
+          return { email: u.email, name: u.name, role: u.role, track: tr, trackName: TRACKS[tr].name, total: ids.length, done: done.length, avgScore: done.length ? Math.round(done.reduce((s, id) => s + (r.done[id].score || 0), 0) / done.length) : 0, lastActive: r.lastActive || '', lessons: Object.fromEntries(ids.map(id => [id, r.done?.[id]?.score ?? null])) };
+        })));
+      }
+      if (sub === 'track' && method === 'PUT') {
+        if (user.role !== 'admin') throw httpErr(403, 'למנהלים בלבד');
+        const { email, track } = await readBody(req);
+        if (!TRACKS[track]) throw httpErr(400, 'מסלול לא מוכר');
+        if (!(await base.getUser(String(email || '').toLowerCase()))) throw httpErr(404, 'משתמש לא נמצא');
+        const r = await rec(String(email).toLowerCase());
+        await base.put('academy', String(email).toLowerCase(), { ...r, track });
+        return send(res, 200, { ok: true });
+      }
+      if (sub === 'activity' && method === 'GET') {
+        const n = Math.max(1, Math.min(200, +url.searchParams.get('limit') || 60));
+        return send(res, 200, (await recentEvents(store, n)).map(e => ({ id: e.id, type: e.type, by: e.name || e.by, at: e.at, text: describeEvent(e) })));
+      }
+      if (sub === 'knowledge') {
+        if (method === 'GET') {
+          const all = await store.list('knowledge');
+          const pb = all.find(k => k.id === 'playbook');
+          return send(res, 200, { playbook: pb ? { body: pb.body, updated: pb.updated, ai: !!pb.ai, by: pb.by } : null, items: all.filter(k => k.id !== 'playbook').sort((a, c) => (a.id < c.id ? 1 : -1)).slice(0, 100) });
+        }
+        if (method === 'POST') {
+          const b = await readBody(req);
+          const type = ['need', 'decision', 'note'].includes(b.type) ? b.type : 'note';
+          const title = String(b.title || '').trim().slice(0, 120), body = String(b.body || '').trim().slice(0, 1500);
+          if (title.length < 3) throw httpErr(400, 'כתבו כותרת קצרה');
+          const item = await store.put('knowledge', `${String(Date.now()).padStart(13, '0')}-${crypto.randomBytes(3).toString('hex')}`, { type, title, body, by: user.name || user.email, byEmail: user.email, at: new Date().toISOString(), related: searchLessons(`${title} ${body}`, 3) });
+          await logEvent(store, user, 'knowledge.add', { kind: type, label: title });
+          return send(res, 201, item);
+        }
+        if (method === 'DELETE' && parts[2] && parts[2] !== 'playbook') {
+          const it = await store.get('knowledge', parts[2]);
+          if (!it) throw httpErr(404, 'לא נמצא');
+          if (user.role !== 'admin' && it.byEmail !== user.email) throw httpErr(403, 'אפשר למחוק רק פריטים שכתבתם');
+          await store.del('knowledge', parts[2]);
+          return send(res, 200, { ok: true });
+        }
+      }
+      if (sub === 'learn' && method === 'POST') { if (env('ANTHROPIC_API_KEY')) { if (limited('ai:' + user.email, 30, 3600e3)) throw httpErr(429, 'חריגה ממכסת AI לשעה'); } return send(res, 200, await runAi(store, user, ws, 'learn', {})); }
+      if (sub === 'ask' && method === 'POST') { if (env('ANTHROPIC_API_KEY')) { if (limited('ai:' + user.email, 30, 3600e3)) throw httpErr(429, 'חריגה ממכסת AI לשעה'); } return send(res, 200, await runAi(store, user, ws, 'ask', await readBody(req))); }
+      if (sub === 'manual' && method === 'GET') {
+        const pb = (await store.list('knowledge')).find(k => k.id === 'playbook');
+        const needs = (await store.list('knowledge')).filter(k => k.id !== 'playbook').sort((a, c) => (a.id < c.id ? 1 : -1)).slice(0, 30);
+        const c = connectors();
+        const extra = `\n## התצורה הנוכחית (נוצר ב-${new Date().toLocaleDateString('he-IL')})\n\n- בינה מלאכותית: ${env('ANTHROPIC_API_KEY') ? 'מחוברת' : 'לא מחוברת'}\n- יצירת תמונות: ${c.image ? 'מחוברת' : 'לא מחוברת'}\n- פייסבוק: ${c.facebook ? 'מחובר' : 'לא מחובר'} · טלגרם: ${c.telegram ? 'מחובר לפרסום' : 'לא מחובר'}${c.tgNotify ? ' · התראות פרטיות פעילות' : ''} · Webhook: ${c.webhook ? 'מחובר' : 'לא מחובר'} · אימייל: ${c.email ? 'מחובר' : 'לא מחובר'}\n- סביבות עבודה: ${(await listWorkspaces()).map(w => w.name).join(', ')}\n${pb ? `\n## ספר הידע החי\n\n${pb.body}\n` : ''}${needs.length ? `\n## צרכים והחלטות\n\n${needs.map(n => `- **${n.type === 'decision' ? 'החלטה' : n.type === 'need' ? 'צורך' : 'הערה'}** (${n.by}, ${String(n.at).slice(0, 10)}): ${n.title}${n.body ? ` — ${n.body}` : ''}`).join('\n')}\n` : ''}`;
+        res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8', 'content-disposition': 'attachment; filename="user-manual.md"', 'x-content-type-options': 'nosniff' });
+        return res.end(manualMarkdown(extra));
+      }
     }
 
     const aiLimit = () => { if (limited('ai:' + user.email, 30, 3600e3)) throw httpErr(429, 'חריגה ממכסת AI לשעה'); };
@@ -749,6 +954,7 @@ ${env('BUSINESS_PROFILE') ? 'Business: ' + env('BUSINESS_PROFILE').slice(0, 300)
         const c = await store.get('campaigns', String(it?.id || '')); if (!c) continue;
         await store.put('campaigns', c.id, { ...c, order: ++n * 10, ...(STATUSES.includes(it.status) ? { status: it.status } : {}) });
       }
+      await logEvent(store, user, 'campaigns.reorder', { count: n });
       return send(res, 200, { ok: true, updated: n });
     }
 
@@ -757,15 +963,21 @@ ${env('BUSINESS_PROFILE') ? 'Business: ' + env('BUSINESS_PROFILE').slice(0, 300)
       const guard = b => { if (kind === 'leads' && b.next && !/^\d{4}-\d{2}-\d{2}$/.test(String(b.next))) throw httpErr(400, 'תאריך לא תקין'); return b; };
       if (method === 'POST' && !id) {
         const defaults = { campaigns: { status: 'פעיל', spent: 0, order: Date.now(), channels: [] }, posts: { status: 'מתוזמן' }, leads: { stage: 'חדש', created: new Date().toISOString().slice(0, 10) } }[kind];
-        return send(res, 201, await store.put(kind, uid(), pick(kind, guard(await readBody(req)), defaults)));
+        const created = await store.put(kind, uid(), pick(kind, guard(await readBody(req)), defaults));
+        await logEvent(store, user, `${kind}.create`, { id: created.id, label: labelOf(created), channel: created.channel });
+        return send(res, 201, created);
       }
       if (id && method === 'PUT') {
         const cur = await store.get(kind, id); if (!cur) throw httpErr(404, 'לא נמצא');
-        return send(res, 200, await store.put(kind, id, pick(kind, guard(await readBody(req)), cur)));
+        const body = guard(await readBody(req));
+        const updated = await store.put(kind, id, pick(kind, body, cur));
+        await logEvent(store, user, `${kind}.update`, { id, label: labelOf(updated), fields: Object.keys(body).filter(k => k in SCHEMA[kind]), ...(body.status ? { status: body.status } : {}), ...(body.stage ? { stage: body.stage } : {}) });
+        return send(res, 200, updated);
       }
       if (id && method === 'DELETE') {
-        const cur = kind === 'posts' ? await store.get('posts', id) : null;
+        const cur = await store.get(kind, id);
         await store.del(kind, id);
+        await logEvent(store, user, `${kind}.delete`, { id, label: labelOf(cur) });
         if (cur?.image && !(await store.list('posts')).some(p => p.image === cur.image)) await base.del('media', cur.image);
         return send(res, 200, { ok: true });
       }
