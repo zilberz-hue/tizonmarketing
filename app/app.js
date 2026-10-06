@@ -253,7 +253,7 @@ const waLink = phone => {
 let settingsState = { groups: [], encrypted: false };
 async function loadSettings() { settingsState = await api('GET', '/settings'); renderSettings(); }
 
-const LTR_KEYS = new Set(['AI_MODEL', 'FB_PAGE_ID', 'TG_CHAT_ID', 'EMAIL_FROM', 'OWNER_EMAIL']);
+const LTR_KEYS = new Set(['AI_MODEL', 'FB_PAGE_ID', 'TG_CHAT_ID', 'TG_NOTIFY_CHAT_ID', 'EMAIL_FROM', 'OWNER_EMAIL']);
 function fieldHtml(f) {
   const src = f.source === 'env' ? ' <span class="badge">מוגדר בשרת</span>' : '';
   const label = esc(f.label);
