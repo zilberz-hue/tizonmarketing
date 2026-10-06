@@ -21,6 +21,7 @@
     <button data-tab="content">לוח תוכן</button>
     <button data-tab="leads">לידים</button>
     <button data-tab="reports">דוחות</button>
+    <button data-tab="settings" id="tab-settings" hidden>⚙️ הגדרות</button>
   </nav>
   <div class="io">
     <button class="btn btn-sm" id="export">ייצוא</button>
@@ -91,7 +92,14 @@
     <div id="pipeline" class="pipeline"></div>
   </section>
 
-  <section id="reports" class="tab"></section>
+  <section id="reports" class="tab">
+    <div id="reports-body"></div>
+    <div class="panel" id="insights">
+      <div class="bar"><h3>💡 תובנות והמלצות</h3><button class="btn btn-sm" id="insights-ai" hidden>✨ ניתוח עמוק עם AI</button></div>
+      <ul id="insights-list" class="insights"></ul>
+    </div>
+  </section>
+  <section id="settings" class="tab"></section>
 </main>
 <dialog id="quick" class="quick" aria-labelledby="quick-title">
   <form method="dialog" class="x"><button aria-label="סגירה">✕</button></form>

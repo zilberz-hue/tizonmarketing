@@ -4,3 +4,5 @@ node_modules/
 functions/core.js
 functions/node_modules/
 dist/
+functions/config.js
+functions/insights.js

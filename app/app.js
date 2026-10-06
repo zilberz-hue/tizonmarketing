@@ -58,6 +58,8 @@ $('#tabs').addEventListener('click', e => {
   const t = e.target.dataset.tab; if (!t) return;
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b === e.target));
   document.querySelectorAll('.tab').forEach(s => s.classList.toggle('active', s.id === t));
+  if (t === 'settings') loadSettings().catch(e => e.message !== 'auth' && alert(e.message));
+  if (t === 'reports') loadInsights(false);
 });
 
 $('#new-campaign').onclick = () => { $('#campaign-form').hidden = false; };
@@ -105,6 +107,8 @@ document.addEventListener('click', safe(async e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const { act, id } = b.dataset;
   if (act === 'quick-open') return openQuick();
+  if (act === 'test') return testConnection(b);
+  if (act === 'clear-secret') { if (!confirm('להסיר את הערך השמור?')) return; await api('PUT', '/settings', { clear: [b.dataset.key] }); await loadSettings(); await refresh(); return; }
   if (act === 'copy-link') { navigator.clipboard?.writeText(`${location.origin}/?c=${id}`); toast('הקישור הועתק. לידים שיגיעו דרכו ישויכו לקמפיין'); return; }
   if (act === 'copy') { navigator.clipboard?.writeText(db.posts.find(p => p.id === id).text); b.textContent = 'הועתק ✓'; return; }
   if (act === 'del-campaign' && confirm('למחוק את הקמפיין?')) await api('DELETE', '/campaigns/' + id);
@@ -239,10 +243,83 @@ async function launchQuick(form, asDraft) {
   toast(asDraft ? `נשמרו ${posts.length} טיוטות` : `הקמפיין שוגר: ${posts.length} פוסטים מתוזמנים 🚀`);
 }
 
+// ---------- Settings ----------
+const waLink = phone => {
+  let d = String(phone || '').replace(/\D/g, '');
+  if (d.startsWith('0')) d = '972' + d.slice(1);
+  return d.length >= 9 && d.length <= 15 ? `https://wa.me/${d}` : '';
+};
+
+let settingsState = { groups: [], encrypted: false };
+async function loadSettings() { settingsState = await api('GET', '/settings'); renderSettings(); }
+
+const LTR_KEYS = new Set(['AI_MODEL', 'FB_PAGE_ID', 'TG_CHAT_ID', 'EMAIL_FROM', 'OWNER_EMAIL']);
+function fieldHtml(f) {
+  const src = f.source === 'env' ? ' <span class="badge">מוגדר בשרת</span>' : '';
+  const label = esc(f.label);
+  if (f.type === 'select') return `<label>${label} <select name="${f.key}">${f.options.map(([v, l]) => `<option value="${esc(v)}" ${f.value === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
+  if (f.type === 'textarea') return `<label>${label} <textarea name="${f.key}" rows="3" placeholder="${esc(f.placeholder || '')}">${esc(f.value || '')}</textarea></label>`;
+  if (f.secret) return `<label>${label}${src} <span class="pw"><input name="${f.key}" type="password" dir="ltr" autocomplete="off" placeholder="${f.set ? esc(f.hint) + ' מוגדר. להחלפה הקלידו חדש' : esc(f.placeholder || '')}">${f.set && f.source === 'settings' ? `<button type="button" class="eye" data-act="clear-secret" data-key="${f.key}" title="הסרה" aria-label="הסרת ${label}">✕</button>` : ''}</span></label>`;
+  return `<label>${label}${src} <input name="${f.key}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}" autocomplete="off"${LTR_KEYS.has(f.key) ? ' dir="ltr"' : ''}></label>`;
+}
+
+function renderSettings() {
+  const root = $('#settings');
+  const open = [...root.querySelectorAll('details[open]')].map(d => d.closest('form').dataset.group);
+  root.innerHTML = `<div class="bar"><h2>הגדרות וחיבורים</h2></div>
+    <p class="meta">כאן מכניסים את כל המפתחות והחיבורים, במקום אחד. הם נשמרים בשרת, משותפים לכל הצוות, ולא מוצגים שוב אחרי השמירה.${settingsState.encrypted ? ' מוצפנים בהצפנה.' : ''}</p>` +
+    settingsState.groups.map(g => `<form class="panel set-group" data-group="${g.id}">
+      <div class="bar"><h3>${g.title}</h3><span class="badge ${g.connected ? 'auto' : ''}">${g.connected ? '✅ מחובר' : (g.test ? '⚪ לא מחובר' : '')}</span></div>
+      ${g.desc ? `<p class="meta">${esc(g.desc)}</p>` : ''}
+      ${g.help ? `<details ${open.includes(g.id) ? 'open' : ''}><summary>איפה משיגים?</summary><p class="meta">${esc(g.help)}</p></details>` : ''}
+      ${g.fields.map(fieldHtml).join('')}
+      <div class="acts">
+        <button class="btn btn-sm" type="submit">שמירה</button>
+        ${g.test ? `<button type="button" data-act="test" data-service="${g.test}">בדיקת חיבור</button>` : ''}
+        <span class="test-result" role="status"></span>
+      </div></form>`).join('');
+}
+
+const settingsValues = form => Object.fromEntries(new FormData(form));
+$('#settings').addEventListener('submit', safe(async e => {
+  e.preventDefault();
+  await api('PUT', '/settings', { values: settingsValues(e.target) });
+  await loadSettings(); await refresh();
+  toast('ההגדרות נשמרו ✅');
+}));
+
+async function testConnection(btn) {
+  const form = btn.closest('form'), out = form.querySelector('.test-result');
+  out.className = 'test-result'; out.textContent = 'בודק…'; btn.disabled = true;
+  try {
+    await api('PUT', '/settings', { values: settingsValues(form) }); // test what is on screen
+    const r = await api('POST', '/settings/test', { service: btn.dataset.service });
+    out.className = 'test-result ' + (r.ok ? 'ok' : 'err');
+    out.textContent = (r.ok ? '✅ ' : '❌ ') + r.detail;
+    await refresh();
+    if (r.ok) { const g = settingsState.groups.find(x => x.id === form.dataset.group); if (g) g.connected = true; form.querySelector('.badge').className = 'badge auto'; form.querySelector('.badge').textContent = '✅ מחובר'; }
+  } catch (e) { out.className = 'test-result err'; out.textContent = '❌ ' + e.message; }
+  finally { btn.disabled = false; }
+}
+
+// ---------- Insights ----------
+async function loadInsights(ai) {
+  const list = $('#insights-list');
+  list.innerHTML = '<li class="meta">מנתח…</li>';
+  try {
+    const r = await api('POST', '/insights', { ai });
+    list.innerHTML = r.insights.map(i => `<li>${esc(i)}</li>`).join('') || '<li class="meta">אין תובנות כרגע</li>';
+    if (ai && !r.ai) toast('ניתוח AI לא זמין, מוצגות תובנות בסיסיות');
+  } catch (e) { list.innerHTML = e.message === 'auth' ? '' : `<li class="meta">${esc(e.message)}</li>`; }
+}
+$('#insights-ai').onclick = () => loadInsights(true);
+
 function render() {
   const opts = '<option value="">ללא קמפיין</option>' + db.campaigns.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   [$('#post-campaign'), $('#lead-campaign')].forEach(s => { const v = s.value; s.innerHTML = opts; s.value = v; });
   $('#ai-text').hidden = !caps.ai;
+  $('#tab-settings').hidden = me?.role !== 'admin';
+  $('#insights-ai').hidden = !caps.ai;
   renderCampaigns(); renderPosts(); renderLeads(); renderReports(); renderDash();
 }
 
@@ -309,6 +386,7 @@ function renderLeads() {
         ${i > 0 ? `<button data-act="move" data-id="${l.id}" data-stage="${STAGES[i - 1]}">→</button>` : ''}
         ${i < STAGES.length - 1 ? `<button data-act="move" data-id="${l.id}" data-stage="${STAGES[i + 1]}">←</button>` : ''}
         <button data-act="move" data-id="${l.id}" data-stage="אבוד">✕</button>
+        ${waLink(l.phone) ? `<a href="${waLink(l.phone)}" target="_blank" rel="noopener" title="שלחו הודעה בוואטסאפ" aria-label="וואטסאפ">💬</a>` : ''}
         <button class="danger" data-act="del-lead" data-id="${l.id}">מחיקה</button>
       </div></div>`).join('')}</div>`;
   }).join('');
@@ -348,7 +426,7 @@ function renderReports() {
   const t = totals();
   const rows = db.campaigns.map(c => { const s = stats(c);
     return `<tr><td>${esc(c.name)}</td><td>${money(c.spent)}</td><td>${s.leads}</td><td>${money(s.cpl)}</td><td>${s.won}</td><td>${money(s.cac)}</td><td>${money(s.revenue)}</td><td>${s.roas.toFixed(2)}x</td><td>${s.conv.toFixed(0)}%</td></tr>`; }).join('');
-  $('#reports').innerHTML = `<h2>דוחות</h2>
+  $('#reports-body').innerHTML = `<h2>דוחות</h2>
     <div class="kpis">
       <div class="kpi"><b>${money(t.cpl)}</b>עלות לליד</div>
       <div class="kpi"><b>${t.roas.toFixed(2)}x</b>החזר על הוצאה</div>
