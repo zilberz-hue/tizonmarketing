@@ -21,7 +21,7 @@ async function api(method, path, body) {
   });
   if (r.status === 401 && path !== '/login') { setToken(''); showLogin(); throw new Error('auth'); }
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.error || 'שגיאה');
+  if (!r.ok) throw new Error((d.error || 'שגיאה') + (d.detail ? ` (${d.detail})` : ''));
   return d;
 }
 const safe = fn => async (...a) => { try { await fn(...a); } catch (e) { if (e.message !== 'auth') alert(e.message); } };

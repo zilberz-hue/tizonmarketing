@@ -264,7 +264,11 @@ export function createApp(store) {
     try { await api(req, res, url); }
     catch (e) {
       if (!e.status) console.error(e);
-      if (!res.headersSent) send(res, e.status || 500, { error: e.status ? e.message : 'שגיאת שרת' });
+      if (!res.headersSent) send(res, e.status || 500, {
+        error: e.status ? e.message : 'שגיאת שרת',
+        // Opt-in diagnostics (DEBUG_ERRORS=true) for first-time setup; never enable on a public production site.
+        ...(!e.status && env('DEBUG_ERRORS') === 'true' && { detail: `${e.name}: ${String(e.message).slice(0, 300)}` })
+      });
     }
   };
   return { handle, tick, ensureAdmin };
