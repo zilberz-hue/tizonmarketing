@@ -6,3 +6,4 @@ functions/node_modules/
 dist/
 functions/config.js
 functions/insights.js
+functions/compliance.js

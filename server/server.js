@@ -21,11 +21,11 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 const app = createApp(sqliteStore(path.join(DATA_DIR, 'tizon.db')));
 
 // --- static files (whitelist: only the site itself, never server/ data/ .env) ---
-const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webp': 'image/webp', '.png': 'image/png' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webp': 'image/webp', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 function serveStatic(req, res, url) {
   let p = decodeURIComponent(url.pathname);
   if (p.endsWith('/')) p += 'index.html';
-  const ok = /^\/(index\.html|style\.css|script\.js|assets\/(logo\.webp|favicon\.png)|app\/(index\.html|app\.css|app\.js|plan\.js))$/.test(p);
+  const ok = /^\/(index\.html|style\.css|script\.js|assets\/(logo\.webp|favicon\.png|icon-192\.png|icon-512\.png)|app\/(index\.html|app\.css|app\.js|plan\.js|extras\.js|sw\.js|manifest\.webmanifest))$/.test(p);
   if (!ok) { res.writeHead(404); return res.end('Not found'); }
   const file = path.join(ROOT, p);
   fs.readFile(file, (err, buf) => {
@@ -48,9 +48,9 @@ export const server = http.createServer(async (req, res) => {
 });
 
 let running = false;
-export const tick = async () => {
+export const tick = async now => {
   if (running) return; running = true;
-  try { await app.tick(); } catch (e) { console.error('tick:', e); } finally { running = false; }
+  try { await app.tick(now); } catch (e) { console.error('tick:', e); } finally { running = false; }
 };
 setInterval(tick, 30e3).unref();
 app.ensureAdmin().catch(e => console.error(e));

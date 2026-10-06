@@ -1,9 +1,21 @@
 // Runtime configuration: values entered in the app's Settings screen (stored in the database)
 // override environment variables, so integrations can be set up without touching hosting settings.
 import crypto from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
-let overrides = {};
-export const env = k => (overrides[k] || process.env[k]) || '';
+// Each request/tick runs inside a workspace context { ws, overrides }, so one deployment can serve
+// several clients (agency mode) without mixing their integrations or data.
+const als = new AsyncLocalStorage();
+export const runWith = (context, fn) => als.run(context, fn);
+export const ctx = () => als.getStore();
+// Workspaces other than "main" never inherit integration keys from the environment (so a client can
+// never publish to another client's page); only the AI key is shared with the agency.
+const SHARED_FALLBACK = new Set(['ANTHROPIC_API_KEY', 'AI_MODEL']);
+export const env = k => {
+  const c = als.getStore();
+  if (c && c.ws !== 'main' && FIELDS.has(k) && !SHARED_FALLBACK.has(k)) return c.overrides?.[k] || '';
+  return (c?.overrides?.[k] || process.env[k]) || '';
+};
 
 const yesNo = [['on', 'פעיל'], ['off', 'כבוי']];
 export const GROUPS = [
@@ -19,7 +31,8 @@ export const GROUPS = [
     help: 'ב-developers.facebook.com ← Graph API Explorer ← הרשאות pages_manage_posts ו-pages_show_list ← טוקן דף.',
     fields: [
       { key: 'FB_PAGE_ID', label: 'מזהה הדף (Page ID)' },
-      { key: 'FB_PAGE_TOKEN', label: 'טוקן הדף', secret: true }
+      { key: 'FB_PAGE_TOKEN', label: 'טוקן הדף', secret: true },
+      { key: 'FB_ADS_TOKEN', label: 'טוקן לנתוני קידום ממומן (אופציונלי)', secret: true }
     ] },
   { id: 'telegram', title: '✈️ טלגרם', desc: 'פרסום לערוץ או לקבוצה, והתראות פרטיות אליכם על לידים.', test: 'telegram', required: ['TG_BOT_TOKEN'], needAny: ['TG_CHAT_ID', 'TG_NOTIFY_CHAT_ID'],
     help: 'ב-BotFather יוצרים בוט (/newbot) ומעתיקים את הטוקן. לפרסום: מוסיפים את הבוט כמנהל בערוץ, ומזינים @שם_הערוץ (ערוץ ציבורי) או מספר שיחה. להתראות: שולחים לבוט הודעה בצ׳אט פרטי, ומזינים את מספר הצ׳אט שלכם. פרטיות: התראות על לידים כוללות שמות וטלפונים, ולכן אף פעם לא נשלחות לערוץ הפרסום.',
@@ -43,6 +56,8 @@ export const GROUPS = [
   { id: 'general', title: '⚙️ כללי', desc: '', required: [],
     fields: [
       { key: 'WEEKLY_DIGEST', label: 'סיכום שבועי אליכם (טלגרם או אימייל)', type: 'select', options: yesNo, default: 'on' },
+      { key: 'COMPLIANCE', label: 'בדיקת תאימות לפני פרסום (עוצרת ניסוחים רפואיים בעייתיים)', type: 'select', options: yesNo, default: 'on' },
+      { key: 'FOLLOWUP', label: 'תזכורות מעקב ללידים (יום 1, 3, 7)', type: 'select', options: yesNo, default: 'on' },
       { key: 'AUTO_APPROVE', label: 'פוסטים שה-AI יוצר מתפרסמים בלי אישור', type: 'select', options: [['false', 'לא, לאשר ידנית'], ['true', 'כן, אוטומטית']], default: 'false' }
     ] }
 ];
@@ -68,16 +83,18 @@ function unseal(v) {
   } catch { return ''; }
 }
 
-let loadedAt = 0;
-export async function loadSettings(store, force = false) {
-  if (!force && Date.now() - loadedAt < 15e3) return;
+const cache = new Map(); // workspace -> { at, values }
+export async function loadSettings(store, ws = 'main', force = false) {
+  const hit = cache.get(ws);
+  if (!force && hit && Date.now() - hit.at < 15e3) return hit.values;
+  let vals = hit?.values || {};
   try {
     const rec = await store.get('settings', 'main');
-    const vals = {};
+    vals = {};
     for (const [k, v] of Object.entries(rec?.values || {})) if (FIELDS.has(k) && typeof v === 'string') vals[k] = SECRETS.has(k) ? unseal(v) : v;
-    overrides = vals;
   } catch (e) { console.error('loadSettings:', e.message); }
-  loadedAt = Date.now();
+  cache.set(ws, { at: Date.now(), values: vals });
+  return vals;
 }
 
 const bad = m => Object.assign(new Error(m), { status: 400 });
@@ -90,7 +107,7 @@ function validate(key, v) {
   if (/[\r\n]/.test(v) && f.type !== 'textarea') throw bad(`ערך לא תקין עבור ${f.label}`);
 }
 
-export async function saveSettings(store, patch = {}, clear = []) {
+export async function saveSettings(store, ws, patch = {}, clear = []) {
   const rec = (await store.get('settings', 'main')) || {};
   const values = { ...(rec.values || {}) };
   for (const [k, raw] of Object.entries(patch)) {
@@ -102,7 +119,7 @@ export async function saveSettings(store, patch = {}, clear = []) {
   }
   for (const k of Array.isArray(clear) ? clear : []) if (FIELDS.has(k)) delete values[k];
   await store.put('settings', 'main', { ...rec, id: undefined, values, updated: new Date().toISOString() });
-  await loadSettings(store, true);
+  return loadSettings(store, ws, true);
 }
 
 export async function getMeta(store) { return (await store.get('settings', 'main'))?.meta || {}; }
@@ -120,7 +137,7 @@ export function describeSettings() {
       const v = env(f.key), secret = !!f.secret;
       return {
         key: f.key, label: f.label, type: f.type || 'text', secret, placeholder: f.placeholder, options: f.options,
-        set: !!v, source: overrides[f.key] ? 'settings' : (process.env[f.key] ? 'env' : ''),
+        set: !!v, source: ctx()?.overrides?.[f.key] ? 'settings' : (v ? 'env' : ''),
         hint: secret && v ? '••••' + v.slice(-4) : undefined,
         value: secret ? undefined : (v || f.default || '')
       };
