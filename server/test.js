@@ -179,6 +179,50 @@ assert.equal(leadsNow.find(l => l.name === 'זר').campaign, '');
   await call('PUT', '/api/settings', { clear: ['TG_BOT_TOKEN', 'TG_CHAT_ID'] });
 }
 
+// ---- Agency mode: workspaces are isolated (data, integrations, access) ----
+{
+  const adminTok = token;
+  const w = (await call('POST', '/api/workspaces', { name: 'לקוח ב' })).data;
+  assert.ok(w.id);
+  const W = { 'x-workspace': w.id };
+  const wc = (await call('POST', '/api/campaigns', { name: 'רק של לקוח ב' }, W)).data;
+  assert.ok(!(await call('GET', '/api/state')).data.campaigns.some(x => x.id === wc.id), 'main does not see the client data');
+  const wst = (await call('GET', '/api/state', undefined, W)).data;
+  assert.deepEqual(wst.campaigns.map(x => x.id), [wc.id], 'workspace sees only its own data');
+  assert.equal(wst.ws, w.id);
+  assert.ok(wst.workspaces.length >= 2);
+
+  // integrations never leak from main into a client workspace (env webhook is set for main)
+  assert.equal(wst.caps.webhook, false);
+  assert.equal((await call('GET', '/api/settings', undefined, W)).data.groups.find(g => g.id === 'webhook').connected, false);
+  const before2 = received.length, log2 = mock2log.length;
+  await call('POST', '/api/posts', { channel: 'Instagram', text: 'של לקוח ב', at: new Date(Date.now() - 1000).toISOString() }, W);
+  await tick();
+  assert.equal(received.length, before2); assert.equal(mock2log.length, log2 + (mock2log.length - log2), 'sanity');
+  assert.ok(!mock2log.slice(log2).some(r => r.body?.text === 'של לקוח ב'), "client post is never sent to main's webhook");
+  const cp = (await call('GET', '/api/state', undefined, W)).data.posts.find(p => p.text === 'של לקוח ב');
+  assert.equal(cp.status, 'ידני');
+
+  // public lead form of a client site targets its workspace
+  const pub2 = await fetch(base + '/api/public/lead', { method: 'POST', headers: { 'content-type': 'application/json', 'x-nf-client-connection-ip': '8.8.8.1' }, body: JSON.stringify({ name: 'ליד ללקוח', phone: '050', ws: w.id }) });
+  assert.equal(pub2.status, 200);
+  assert.ok((await call('GET', '/api/state', undefined, W)).data.leads.some(l => l.name === 'ליד ללקוח'));
+  assert.ok(!(await call('GET', '/api/state')).data.leads.some(l => l.name === 'ליד ללקוח'));
+  assert.equal((await fetch(base + '/api/public/lead', { method: 'POST', headers: { 'content-type': 'application/json', 'x-nf-client-connection-ip': '8.8.8.2' }, body: JSON.stringify({ name: 'x', phone: '1', ws: 'nope' }) })).status, 404);
+
+  // members only reach workspaces they were granted
+  await call('POST', '/api/login', { email: 'member@b.co', password: 'password123' });
+  assert.equal((await call('GET', '/api/state', undefined, W)).status, 403);
+  assert.equal((await call('GET', '/api/state')).status, 200, 'default workspace is allowed');
+  assert.equal((await call('GET', '/api/state', undefined, { 'x-workspace': 'nope' })).status, 403);
+  assert.equal((await call('GET', '/api/workspaces')).status, 403);
+  token = adminTok;
+  assert.equal((await call('PUT', '/api/access', { email: 'member@b.co', workspaces: ['main', w.id] })).status, 200);
+  await call('POST', '/api/login', { email: 'member@b.co', password: 'password123' });
+  assert.equal((await call('GET', '/api/state', undefined, W)).status, 200);
+  token = adminTok;
+}
+
 // work-plan checklist: shared, validated, returned in /state
 assert.equal((await call('POST', '/api/checklist', { key: 's1', done: true })).status, 200);
 assert.equal((await call('POST', '/api/checklist', { key: 'k1@2026-10-04', done: true })).status, 200);

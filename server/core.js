@@ -2,7 +2,7 @@
 // Firestore store in functions/index.js), so the same code runs on the self-hosted Node
 // server and on Firebase Cloud Functions behind Netlify.
 import crypto from 'node:crypto';
-import { env, loadSettings, saveSettings, describeSettings, getMeta, setMeta } from './config.js';
+import { env, loadSettings, saveSettings, describeSettings, getMeta, setMeta, runWith, ctx } from './config.js';
 import { computeStats, ruleInsights, insightsPrompt, parseBullets } from './insights.js';
 
 const SCHEMA = {
@@ -230,6 +230,25 @@ export function createApp(store) {
     }
   })().catch(e => { bootstrapped = undefined; throw e; });
 
+  // ---- workspaces (agency mode): per-client data under kind prefixes; "main" keeps the original, unprefixed kinds ----
+  const scoped = ws => {
+    if (ws === 'main') return store;
+    const k = kind => `${ws}__${kind}`;
+    return { ...store, list: kind => store.list(k(kind)), get: (kind, id) => store.get(k(kind), id), put: (kind, id, o) => store.put(k(kind), id, o),
+      del: (kind, id) => store.del(k(kind), id), claim: (kind, id, a, b) => store.claim(k(kind), id, a, b) };
+  };
+  async function listWorkspaces() {
+    const rows = await store.list('workspaces');
+    const main = rows.find(r => r.id === 'main');
+    return [{ id: 'main', name: main?.name || 'ראשי' }, ...rows.filter(r => r.id !== 'main').map(({ id, name }) => ({ id, name }))];
+  }
+  async function accessFor(user) {
+    const all = (await listWorkspaces()).map(w => w.id);
+    if (user.role === 'admin') return all;
+    const rec = await store.get('access', user.email);
+    return (rec?.workspaces?.length ? rec.workspaces : ['main']).filter(id => all.includes(id));
+  }
+
   async function sessionUser(req) {
     const m = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization || '');
     if (!m) return null;
@@ -239,7 +258,7 @@ export function createApp(store) {
     return u && { email: u.email, name: u.name, role: u.role };
   }
 
-  async function digest(now) {
+  async function digest(store, now) {
     const c = connectors();
     if (env('WEEKLY_DIGEST') === 'off' || !(c.tgNotify || c.webhook || (c.email && env('OWNER_EMAIL')))) return;
     const last = Date.parse((await getMeta(store)).lastDigest || 0) || 0;
@@ -259,8 +278,14 @@ export function createApp(store) {
 
   async function tick() {
     await ensureAdmin();
-    await loadSettings(store);
     const now = Date.now();
+    for (const { id: ws } of await listWorkspaces()) {
+      const S = scoped(ws);
+      await runWith({ ws, overrides: await loadSettings(S, ws) }, () => tickWorkspace(S, now)).catch(e => console.error('tick', ws, e));
+    }
+  }
+
+  async function tickWorkspace(store, now) {
     for (const p of await store.list('posts')) {
       if (p.status !== 'מתוזמן' || !p.at || Date.parse(p.at) > now) continue;
       if (!await store.claim('posts', p.id, 'מתוזמן', 'מפרסם')) continue;
@@ -282,12 +307,10 @@ export function createApp(store) {
         await notify(`📞 ליד ממתין יותר מיומיים: ${l.name} ${l.phone} ${l.email}`, 'lead.stale', { lead: l });
       }
     }
-    await digest(now).catch(e => console.error('digest:', e.message));
+    await digest(store, now).catch(e => console.error('digest:', e.message));
   }
 
-  async function api(req, res, url) {
-    await ensureAdmin();
-    await loadSettings(store);
+  async function api(req, res, url, store, user, ws) {
     const parts = url.pathname.replace(/^\/api(?=\/|$)/, '').split('/').filter(Boolean);
     const method = req.method, ip = clientIp(req);
 
@@ -299,10 +322,15 @@ export function createApp(store) {
       const b = await readBody(req);
       if (b.website) return send(res, 200, { ok: true }, cors); // honeypot
       if (!String(b.name || '').trim() || !(String(b.phone || '').trim() || String(b.email || '').trim())) throw httpErr(400, 'נא למלא שם וטלפון או אימייל');
-      const cid = String(b.campaign || '').slice(0, 40);
-      const attributed = cid && await store.get('campaigns', cid) ? cid : '';
-      const lead = await store.put('leads', uid(), pick('leads', { name: b.name, phone: b.phone, email: b.email, note: b.message, campaign: attributed }, { created: new Date().toISOString().slice(0, 10), stage: 'חדש', value: 0 }));
-      await onNewLead(lead);
+      const lws = String(b.ws || 'main');
+      if (lws !== 'main' && !(await listWorkspaces()).some(w => w.id === lws)) throw httpErr(404, 'לא נמצא');
+      const LS = scoped(lws);
+      await runWith({ ws: lws, overrides: await loadSettings(LS, lws) }, async () => {
+        const cid = String(b.campaign || '').slice(0, 40);
+        const attributed = cid && await LS.get('campaigns', cid) ? cid : '';
+        const lead = await LS.put('leads', uid(), pick('leads', { name: b.name, phone: b.phone, email: b.email, note: b.message, campaign: attributed }, { created: new Date().toISOString().slice(0, 10), stage: 'חדש', value: 0 }));
+        await onNewLead(lead);
+      });
       return send(res, 200, { ok: true }, cors);
     }
 
@@ -316,7 +344,6 @@ export function createApp(store) {
       return send(res, 200, { token, email: u.email, name: u.name, role: u.role });
     }
 
-    const user = await sessionUser(req);
     if (!user) throw httpErr(401, 'נדרשת התחברות');
     if (method !== 'GET' && req.headers['x-requested-with'] !== 'tizon') throw httpErr(403, 'Forbidden');
 
@@ -328,17 +355,55 @@ export function createApp(store) {
     if (parts[0] === 'state') {
       const [[campaigns, posts, leads], checklist] = await Promise.all([
         Promise.all(['campaigns', 'posts', 'leads'].map(k => store.list(k))), store.get('checklist', 'main')]);
-      return send(res, 200, { me: user, campaigns, posts, leads, checklist: checklist?.done || {}, caps: { ...connectors(), ai: !!env('ANTHROPIC_API_KEY') } });
+      const names = new Map((await listWorkspaces()).map(w => [w.id, w.name]));
+      const workspaces = (await accessFor(user)).map(id => ({ id, name: names.get(id) }));
+      return send(res, 200, { me: user, ws, workspaces, campaigns, posts, leads, checklist: checklist?.done || {}, caps: { ...connectors(), ai: !!env('ANTHROPIC_API_KEY') } });
+    }
+
+    if (parts[0] === 'workspaces') {
+      if (user.role !== 'admin') throw httpErr(403, 'למנהלים בלבד');
+      if (method === 'GET') return send(res, 200, await listWorkspaces());
+      if (method === 'POST') {
+        const name = String((await readBody(req)).name || '').trim().slice(0, 80);
+        if (!name) throw httpErr(400, 'נא להזין שם');
+        const w = await store.put('workspaces', uid(), { name, created: new Date().toISOString() });
+        return send(res, 201, { id: w.id, name });
+      }
+      if (method === 'PUT' && parts[1]) {
+        const name = String((await readBody(req)).name || '').trim().slice(0, 80);
+        if (!name) throw httpErr(400, 'נא להזין שם');
+        await store.put('workspaces', parts[1], { name, created: (await store.get('workspaces', parts[1]))?.created || new Date().toISOString() });
+        return send(res, 200, { id: parts[1], name });
+      }
+    }
+    if (parts[0] === 'access') {
+      if (user.role !== 'admin') throw httpErr(403, 'למנהלים בלבד');
+      if (method === 'GET') {
+        const users = await store.listUsers();
+        return send(res, 200, await Promise.all(users.map(async u => ({ ...u, workspaces: u.role === 'admin' ? ['*'] : (await store.get('access', u.email))?.workspaces || ['main'] }))));
+      }
+      if (method === 'PUT') {
+        const { email, workspaces } = await readBody(req);
+        const known = new Set((await listWorkspaces()).map(w => w.id));
+        const list = (Array.isArray(workspaces) ? workspaces : []).filter(id => known.has(id));
+        if (!(await store.getUser(String(email || '').toLowerCase()))) throw httpErr(404, 'משתמש לא נמצא');
+        await store.put('access', String(email).toLowerCase(), { workspaces: list });
+        return send(res, 200, { ok: true });
+      }
     }
 
     if (parts[0] === 'users') {
       if (user.role !== 'admin') throw httpErr(403, 'למנהלים בלבד');
       if (method === 'GET') return send(res, 200, await store.listUsers());
       if (method === 'POST') {
-        const { email, name, password, role } = await readBody(req);
+        const { email, name, password, role, workspaces } = await readBody(req);
         if (!/^[^\s@/]+@[^\s@/]+\.[^\s@/]+$/.test(email || '') || String(password || '').length < 8) throw httpErr(400, 'אימייל תקין וסיסמה של 8 תווים לפחות');
         try { await store.addUser(email.toLowerCase(), String(name || '').slice(0, 100), hashPw(String(password)), role === 'admin' ? 'admin' : 'member'); }
         catch (e) { throw e.code === 'EXISTS' ? httpErr(409, 'המשתמש כבר קיים') : e; }
+        if (role !== 'admin' && Array.isArray(workspaces)) {
+          const known = new Set((await listWorkspaces()).map(w => w.id));
+          await store.put('access', email.toLowerCase(), { workspaces: workspaces.filter(id => known.has(id)) });
+        }
         return send(res, 201, { ok: true });
       }
     }
@@ -360,7 +425,7 @@ export function createApp(store) {
       if (method === 'GET' && !parts[1]) return send(res, 200, { groups: describeSettings(), encrypted: !!process.env.SETTINGS_KEY });
       if (method === 'PUT' && !parts[1]) {
         const b = await readBody(req);
-        await saveSettings(store, b.values && typeof b.values === 'object' ? b.values : {}, b.clear);
+        ctx().overrides = await saveSettings(store, ws, b.values && typeof b.values === 'object' ? b.values : {}, b.clear);
         return send(res, 200, { groups: describeSettings() });
       }
       if (method === 'POST' && parts[1] === 'test') {
@@ -441,8 +506,18 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
   }
 
   const handle = async (req, res, url) => {
-    try { await api(req, res, url); }
-    catch (e) {
+    try {
+      await ensureAdmin();
+      const user = await sessionUser(req); // null for public and login endpoints
+      let ws = 'main';
+      if (user) {
+        const want = String(req.headers['x-workspace'] || 'main');
+        if (!(await accessFor(user)).includes(want)) throw httpErr(403, 'אין גישה לסביבת העבודה');
+        ws = want;
+      }
+      const S = scoped(ws);
+      await runWith({ ws, overrides: await loadSettings(S, ws) }, () => api(req, res, url, S, user, ws));
+    } catch (e) {
       if (!e.status) console.error(e);
       if (!res.headersSent) send(res, e.status || 500, {
         error: e.status ? e.message : 'שגיאת שרת',
