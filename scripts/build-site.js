@@ -9,7 +9,7 @@ const out = new URL('../dist/', import.meta.url);
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(new URL('app/', out), { recursive: true });
 fs.mkdirSync(new URL('assets/', out), { recursive: true });
-for (const f of ['index.html', 'style.css', 'script.js', 'app/index.html', 'app/app.css', 'app/app.js', 'app/plan.js', 'assets/logo.webp', 'assets/favicon.png'])
+for (const f of ['index.html', 'style.css', 'script.js', 'app/index.html', 'app/app.css', 'app/app.js', 'app/plan.js', 'app/extras.js', 'app/sw.js', 'app/manifest.webmanifest', 'assets/logo.webp', 'assets/favicon.png', 'assets/icon-192.png', 'assets/icon-512.png'])
   fs.copyFileSync(new URL('../' + f, import.meta.url), new URL(f, out));
 
 let target;
@@ -19,5 +19,5 @@ else if (process.env.FIREBASE_PROJECT_ID)
 else console.log('No external backend configured: /api/* is served by the built-in Netlify Functions backend (netlify/functions/api.mjs).');
 
 if (target) fs.writeFileSync(new URL('_redirects', out), `/api/*  ${target}  200\n`);
-fs.writeFileSync(new URL('_headers', out), '/*\n  X-Content-Type-Options: nosniff\n  X-Frame-Options: DENY\n  Referrer-Policy: same-origin\n');
+fs.writeFileSync(new URL('_headers', out), '/*\n  X-Content-Type-Options: nosniff\n  X-Frame-Options: DENY\n  Referrer-Policy: same-origin\n/app/sw.js\n  Cache-Control: no-cache\n');
 console.log('Built dist/ with /api ->', target || '(no backend)');

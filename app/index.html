@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>טיזון | מערכת שיווק ופרסום</title>
   <link rel="icon" type="image/png" href="../assets/favicon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#9a6a2a">
+  <link rel="apple-touch-icon" href="../assets/icon-192.png">
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="app.css">
 </head>
@@ -25,6 +28,8 @@
     <button data-tab="settings" id="tab-settings" hidden>⚙️ הגדרות</button>
   </nav>
   <div class="io">
+    <select id="ws-switch" aria-label="סביבת עבודה" hidden></select>
+    <button class="btn btn-sm btn-ghost" id="install-btn" hidden>📲 התקנה</button>
     <button class="btn btn-sm" id="export">ייצוא</button>
     <button class="btn btn-sm" id="logout">יציאה</button>
   </div>
@@ -75,8 +80,13 @@
         <label>שעה <input name="time" type="time" value="10:00"></label>
       </div>
       <label>טקסט / קריאייטיב <textarea name="text" rows="3" required></textarea></label>
+      <div id="post-risk" class="risk" hidden></div>
+      <input type="hidden" name="image">
+      <div class="imgrow"><button type="button" class="link" id="post-img">📷 הוספת תמונה</button><span id="post-img-preview"></span></div>
       <div class="bar"><button class="btn btn-sm" type="submit">הוספה ללוח</button><button type="button" class="link" id="ai-text" hidden>✨ כתיבה עם AI</button></div>
     </form>
+    <div class="seg" id="content-view" role="group" aria-label="תצוגה"><button type="button" data-view="list" class="on">רשימה</button><button type="button" data-view="month">חודש</button></div>
+    <div id="cal" hidden></div>
     <div id="post-list"></div>
   </section>
 
@@ -111,5 +121,6 @@
 <div id="toast" role="status" aria-live="polite" hidden></div>
 <script src="app.js"></script>
 <script src="plan.js"></script>
+<script src="extras.js"></script>
 </body>
 </html>

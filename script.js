@@ -17,7 +17,8 @@ document.querySelectorAll('[data-count]').forEach(el => {
 
 // Campaign tracking link: /?c=<campaignId> attributes the lead to that campaign.
 const CAMPAIGN_KEY = 'tz-campaign';
-try { const c = new URLSearchParams(location.search).get('c'); if (c) sessionStorage.setItem(CAMPAIGN_KEY, c); } catch {}
+try { const q = new URLSearchParams(location.search), c = q.get('c'), v = q.get('v'); if (c) sessionStorage.setItem(CAMPAIGN_KEY, c); if (v) sessionStorage.setItem('tz-variant', v); } catch {}
+const trackedVariant = () => { try { return sessionStorage.getItem('tz-variant') || ''; } catch { return ''; } };
 const trackedCampaign = () => { try { return sessionStorage.getItem(CAMPAIGN_KEY) || ''; } catch { return ''; } };
 
 document.getElementById('lead-form').addEventListener('submit', async e => {
@@ -26,7 +27,7 @@ document.getElementById('lead-form').addEventListener('submit', async e => {
   try {
     const r = await fetch('/api/public/lead', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ...Object.fromEntries(new FormData(e.target)), campaign: trackedCampaign() })
+      body: JSON.stringify({ ...Object.fromEntries(new FormData(e.target)), campaign: trackedCampaign(), v: trackedVariant() })
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.error || 'שגיאה');

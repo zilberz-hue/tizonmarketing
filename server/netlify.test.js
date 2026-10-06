@@ -64,6 +64,19 @@ const st = (await call('GET', '/settings')).data;
 assert.ok(!JSON.stringify(st).includes('SECRETXYZ'));
 assert.equal(st.groups.find(g => g.id === 'telegram').connected, true);
 assert.equal((await call('GET', '/state')).data.caps.telegram, true);
+
+// Binary media through the Request/Response bridge, compliance, and workspace isolation on the Blobs store
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+const up = await call('POST', '/media', { dataUrl: 'data:image/png;base64,' + PNG });
+assert.equal(up.status, 201);
+const mres = await handler(new Request('https://site.test' + up.data.url), {});
+assert.equal(mres.status, 200); assert.equal(mres.headers.get('content-type'), 'image/png');
+assert.deepEqual(Buffer.from(await mres.arrayBuffer()), Buffer.from(PNG, 'base64'));
+assert.equal((await call('POST', '/compliance/check', { text: 'מבטיח ומרפא' })).data.level, 'high');
+const ws = (await call('POST', '/workspaces', { name: 'לקוח' })).data;
+const cInWs = (await call('POST', '/campaigns', { name: 'בלקוח' }, { 'x-workspace': ws.id })).data;
+assert.ok(!(await call('GET', '/state')).data.campaigns.some(x => x.id === cInWs.id));
+assert.deepEqual((await call('GET', '/state', undefined, { 'x-workspace': ws.id })).data.campaigns.map(x => x.id), [cInWs.id]);
 assert.equal((await call('POST', '/logout')).status, 200);
 assert.equal((await call('GET', '/state')).status, 401);
 

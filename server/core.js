@@ -505,7 +505,7 @@ export function createApp(store) {
       const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
       if (!m) throw httpErr(400, 'תמונה לא תקינה (JPEG, PNG או WebP)');
       const buf = Buffer.from(m[2], 'base64');
-      if (buf.length > 1e6) throw httpErr(413, 'התמונה גדולה מדי (עד 1MB)');
+      if (buf.length > 700e3) throw httpErr(413, 'התמונה גדולה מדי (עד 700KB)'); // base64 must stay under Firestore's 1MB document limit
       const okMagic = { 'image/jpeg': [0xff, 0xd8, 0xff], 'image/png': [0x89, 0x50, 0x4e, 0x47], 'image/webp': [0x52, 0x49, 0x46, 0x46] }[m[1]].every((b, i) => buf[i] === b);
       if (!okMagic) throw httpErr(400, 'קובץ התמונה פגום');
       const id = crypto.randomBytes(12).toString('hex');
@@ -652,7 +652,8 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
         ws = want;
       }
       const host = req.headers['x-forwarded-host'] || req.headers.host;
-      if (host && /^[\w.:-]+$/.test(host)) lastOrigin = `${req.headers['x-forwarded-proto'] || (/^(localhost|127\.)/.test(host) ? 'http' : 'https')}://${host}`;
+      // Only trust the Host of authenticated team members when deriving public image URLs (SITE_URL / Netlify's URL win).
+      if (user && host && /^[\w.:-]+$/.test(host)) lastOrigin = `${req.headers['x-forwarded-proto'] || (/^(localhost|127\.)/.test(host) ? 'http' : 'https')}://${host}`;
       const S = scoped(ws);
       await runWith({ ws, overrides: await loadSettings(S, ws) }, () => api(req, res, url, S, user, ws));
     } catch (e) {

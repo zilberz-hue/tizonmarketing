@@ -4,11 +4,14 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const money = n => '₪' + Math.round(n || 0).toLocaleString('he-IL');
 
 let db = { campaigns: [], posts: [], leads: [], checklist: {} };
-let me = null, caps = {};
+let me = null, caps = {}, workspaces = [], currentWs = 'main';
 const camp = id => db.campaigns.find(c => c.id === id);
 const campName = id => camp(id)?.name || 'ללא קמפיין';
 
 const TOKEN_KEY = 'tizon-token';
+const WS_KEY = 'tizon-ws';
+const getWs = () => { try { return localStorage.getItem(WS_KEY) || 'main'; } catch { return 'main'; } };
+const setWs = id => { try { localStorage.setItem(WS_KEY, id); } catch {} };
 const getToken = () => { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } };
 const setToken = t => { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch {} };
 
@@ -16,7 +19,7 @@ async function api(method, path, body) {
   const token = getToken();
   const r = await fetch('/api' + path, {
     method,
-    headers: { 'content-type': 'application/json', 'x-requested-with': 'tizon', ...(token && { authorization: 'Bearer ' + token }) },
+    headers: { 'content-type': 'application/json', 'x-requested-with': 'tizon', ...(token && { authorization: 'Bearer ' + token }), ...(getWs() !== 'main' && { 'x-workspace': getWs() }) },
     body: body ? JSON.stringify(body) : undefined
   });
   if (r.status === 401 && path !== '/login') { setToken(''); showLogin(); throw new Error('auth'); }
@@ -26,11 +29,32 @@ async function api(method, path, body) {
 }
 const safe = fn => async (...a) => { try { await fn(...a); } catch (e) { if (e.message !== 'auth') alert(e.message); } };
 
+const riskHtml = r => r?.level ? `<div class="risk ${r.level}"><b>${r.level === 'high' ? '🔴 ניסוח רפואי בעייתי: לא יפורסם אוטומטית' : '🟠 כדאי לבדוק את הניסוח'}</b><ul>${r.findings.map(f => `<li><b>"${esc(f.match)}"</b>: ${esc(f.why)}. ${esc(f.fix)}</li>`).join('')}</ul></div>` : '';
+
+// Pick an image, shrink it in the browser (max 1280px, <~600KB) and upload it. Resolves to the media id (or null).
+function pickImage() {
+  return new Promise((resolve, reject) => {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*';
+    inp.onchange = async () => {
+      try {
+        const f = inp.files[0]; if (!f) return resolve(null);
+        const bmp = await createImageBitmap(f), sc = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));
+        const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width * sc); cv.height = Math.round(bmp.height * sc);
+        cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+        let q = 0.85, url; do { url = cv.toDataURL('image/jpeg', q); q -= 0.1; } while (url.length * 0.75 > 600e3 && q > 0.3);
+        resolve((await api('POST', '/media', { dataUrl: url })).id);
+      } catch (e) { reject(e); }
+    };
+    inp.click();
+  });
+}
+const thumb = id => id ? `<img class="thumb" src="/api/media/${esc(id)}" alt="תמונת הפוסט" loading="lazy">` : '';
+
 const localDate = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('sv'); };
 const localTime = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', hour12: false }); };
 async function refresh() {
   const s = await api('GET', '/state');
-  me = s.me; caps = s.caps;
+  me = s.me; caps = s.caps; workspaces = s.workspaces || []; currentWs = s.ws || 'main';
   db = { checklist: s.checklist || {}, campaigns: s.campaigns, leads: s.leads, posts: s.posts.map(p => ({ ...p, date: localDate(p.at), time: localTime(p.at) })) };
   $('#login').hidden = true;
   render();
@@ -77,9 +101,23 @@ $('#campaign-form').addEventListener('submit', safe(async e => {
 $('#post-form').addEventListener('submit', safe(async e => {
   e.preventDefault();
   const f = Object.fromEntries(new FormData(e.target));
-  await api('POST', '/posts', { campaign: f.campaign, channel: f.channel, text: f.text, at: new Date(f.date + 'T' + f.time).toISOString() });
+  await api('POST', '/posts', { campaign: f.campaign, channel: f.channel, text: f.text, image: f.image || '', at: new Date(f.date + 'T' + f.time).toISOString() });
+  $('#post-img-preview').innerHTML = ''; $('#post-risk').hidden = true;
   e.target.reset(); await refresh();
 }));
+$('#post-img').onclick = safe(async () => {
+  const id = await pickImage(); if (!id) return;
+  $('#post-form [name=image]').value = id;
+  $('#post-img-preview').innerHTML = thumb(id) + ' <button type="button" class="link" id="post-img-clear">הסרה</button>';
+});
+$('#post-img-preview').addEventListener('click', e => { if (e.target.id === 'post-img-clear') { $('#post-form [name=image]').value = ''; $('#post-img-preview').innerHTML = ''; } });
+let riskTimer;
+$('#post-form [name=text]').addEventListener('input', e => {
+  clearTimeout(riskTimer);
+  riskTimer = setTimeout(async () => {
+    try { const r = await api('POST', '/compliance/check', { text: e.target.value }); $('#post-risk').innerHTML = riskHtml(r); $('#post-risk').hidden = !r.level; } catch {}
+  }, 600);
+});
 $('#ai-text').onclick = safe(async () => {
   const f = Object.fromEntries(new FormData($('#post-form')));
   const t = prompt('על מה הפוסט? (הנחיה קצרה, אפשר להשאיר ריק)', '');
@@ -107,9 +145,23 @@ document.addEventListener('click', safe(async e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const { act, id } = b.dataset;
   if (act === 'quick-open') return openQuick();
+  if (act === 'sync') { b.disabled = true; try { const r = await api('POST', '/sync', {}); await refresh(); toast(`עודכנו ${r.posts} פוסטים ו-${r.campaigns} קמפיינים`); } finally { b.disabled = false; } return; }
+  if (act === 'attach-image') { const img = await pickImage(); if (!img) return; await api('PUT', '/posts/' + id, { image: img }); await refresh(); toast('התמונה נוספה'); return; }
+  if (act === 'override') { if (!confirm('לאשר פרסום למרות הניסוח שסומן? האחריות על התוכן עליכם.')) return; await api('PUT', '/posts/' + id, { override: 1, status: 'מתוזמן', error: '' }); await refresh(); toast('הפוסט אושר ויפורסם בקרוב'); return; }
+  if (act === 'fix-ai') {
+    const p = db.posts.find(x => x.id === id); b.disabled = true; b.textContent = 'מתקן…';
+    try { const r = await api('POST', '/compliance/fix', { text: p.text }); if (!confirm('הנוסח המתוקן:\n\n' + r.text + '\n\nלהחליף?')) return; await api('PUT', '/posts/' + id, { text: r.text, status: p.status === 'ממתין לבדיקה' ? 'מתוזמן' : p.status, error: '' }); await refresh(); toast('הניסוח עודכן'); } finally { b.disabled = false; }
+    return;
+  }
+  if (act === 'contacted') { await api('POST', `/leads/${id}/contacted`, {}); await refresh(); toast('נרשם. תאריך המעקב הבא עודכן'); return; }
+  if (act === 'edit-note') { const l = db.leads.find(x => x.id === id), v = prompt('הערה על הליד:', l.note || ''); if (v === null) return; await api('PUT', '/leads/' + id, { note: v }); await refresh(); return; }
+  if (act === 'fb-campaign') {
+    const c = camp(id), v = prompt('מזהה הקמפיין הממומן בפייסבוק (Ads Manager), כדי למשוך הוצאה אוטומטית. השאירו ריק להסרה:', c.fbCampaign || '');
+    if (v === null) return; await api('PUT', '/campaigns/' + id, { fbCampaign: v.trim() }); await refresh(); return;
+  }
   if (act === 'test') return testConnection(b);
   if (act === 'clear-secret') { if (!confirm('להסיר את הערך השמור?')) return; await api('PUT', '/settings', { clear: [b.dataset.key] }); await loadSettings(); await refresh(); return; }
-  if (act === 'copy-link') { navigator.clipboard?.writeText(`${location.origin}/?c=${id}`); toast('הקישור הועתק. לידים שיגיעו דרכו ישויכו לקמפיין'); return; }
+  if (act === 'copy-link') { navigator.clipboard?.writeText(`${location.origin}/?c=${id}${b.dataset.v ? '&v=' + b.dataset.v : ''}`); toast('הקישור הועתק. לידים שיגיעו דרכו ישויכו לקמפיין'); return; }
   if (act === 'copy') { navigator.clipboard?.writeText(db.posts.find(p => p.id === id).text); b.textContent = 'הועתק ✓'; return; }
   if (act === 'del-campaign' && confirm('למחוק את הקמפיין?')) await api('DELETE', '/campaigns/' + id);
   else if (act === 'spend') { const c = camp(id), v = prompt('כמה הוצאתם עד כה (₪)?', c.spent); if (v === null || isNaN(+v)) return; await api('PUT', '/campaigns/' + id, { spent: +v }); }
@@ -135,6 +187,12 @@ $('#export').onclick = () => {
   a.download = 'tizon-marketing-' + new Date().toISOString().slice(0, 10) + '.json';
   a.click(); URL.revokeObjectURL(a.href);
 };
+
+document.addEventListener('change', safe(async e => {
+  if (!e.target.classList?.contains('nextdate')) return;
+  await api('PUT', '/leads/' + e.target.dataset.id, { next: e.target.value });
+  await refresh();
+}));
 
 // ---------- Quick campaign ----------
 const ALL_CHANNELS = ['Facebook', 'Instagram', 'WhatsApp', 'TikTok', 'LinkedIn', 'Google', 'Email', 'Telegram'];
@@ -193,7 +251,7 @@ function renderQuickPreview(d, days) {
         <label>קהל יעד <textarea name="audience" rows="2">${esc(d.audience)}</textarea></label>
         <label>מסר מרכזי <input name="message" value="${esc(d.message)}"></label>
       </div>
-      <h3>לוח התוכן (${d.posts.length} פוסטים)</h3>
+      <div class="bar"><h3>לוח התוכן (${d.posts.length} פוסטים)</h3><button type="button" class="link" id="quick-img-all">📷 תמונה לכל הפוסטים</button></div>
       ${d.posts.map((p, i) => `<div class="qpost" data-i="${i}">
         <div class="qhead">
           <label class="chip"><input type="checkbox" class="inc" checked><span>כלול</span></label>
@@ -203,6 +261,8 @@ function renderQuickPreview(d, days) {
           <span class="badge ${isAuto(p.channel) ? 'auto' : ''}">${isAuto(p.channel) ? '⚡ אוטומטי' : 'ידני: תקבלו תזכורת'}</span>
         </div>
         <textarea class="ptext" rows="3" aria-label="טקסט הפוסט">${esc(p.text)}</textarea>
+        <div class="qrisk"></div>
+        <div class="qimg"><button type="button" class="link" data-qimg="${i}">📷 הוספת תמונה</button><span class="qthumb"></span></div>
       </div>`).join('')}
       <div class="qfoot">
         <button class="btn" type="submit" value="launch">🚀 שגרו את הקמפיין</button>
@@ -210,13 +270,26 @@ function renderQuickPreview(d, days) {
         <button type="button" class="link" id="quick-back">חזרה</button>
       </div>
     </form>`;
+  checkQuickRisks();
 }
 
-$('#quick-body').addEventListener('click', e => {
-  if (e.target.id === 'quick-back') openQuick();
-});
+async function checkQuickRisks() {
+  const els = [...document.querySelectorAll('#quick-launch .qpost')];
+  try {
+    const res = await api('POST', '/compliance/check', { texts: els.map(el => el.querySelector('.ptext').value) });
+    els.forEach((el, i) => { el.querySelector('.qrisk').innerHTML = riskHtml(res[i]); });
+  } catch {}
+}
+const setQuickImage = (el, id) => { el.dataset.image = id || ''; el.querySelector('.qthumb').innerHTML = id ? thumb(id) : ''; };
+$('#quick-body').addEventListener('click', safe(async e => {
+  if (e.target.id === 'quick-back') return openQuick();
+  const qi = e.target.closest('[data-qimg]');
+  if (qi) { const id = await pickImage(); if (id) setQuickImage(qi.closest('.qpost'), id); return; }
+  if (e.target.id === 'quick-img-all') { const id = await pickImage(); if (id) document.querySelectorAll('#quick-launch .qpost').forEach(el => setQuickImage(el, id)); }
+}));
 $('#quick-body').addEventListener('change', e => {
   const post = e.target.closest('.qpost'); if (!post) return;
+  if (e.target.classList.contains('ptext')) checkQuickRisks();
   if (e.target.classList.contains('inc')) post.classList.toggle('off', !e.target.checked);
   if (e.target.classList.contains('pch')) {
     const b = post.querySelector('.badge'), auto = isAuto(e.target.value);
@@ -227,7 +300,7 @@ $('#quick-body').addEventListener('change', e => {
 async function launchQuick(form, asDraft) {
   const f = new FormData(form);
   const posts = [...form.querySelectorAll('.qpost')].filter(el => el.querySelector('.inc').checked).map(el => ({
-    channel: el.querySelector('.pch').value, text: el.querySelector('.ptext').value.trim(),
+    channel: el.querySelector('.pch').value, text: el.querySelector('.ptext').value.trim(), image: el.dataset.image || '',
     at: new Date(`${el.querySelector('.pdate').value}T${el.querySelector('.ptime').value}`)
   })).filter(p => p.text && !isNaN(p.at));
   if (!posts.length) throw new Error('סמנו לפחות פוסט אחד');
@@ -236,7 +309,7 @@ async function launchQuick(form, asDraft) {
     name: f.get('name'), goal: f.get('goal'), audience: f.get('audience'), message: f.get('message'), budget: +f.get('budget') || 0,
     channels: [...new Set(posts.map(p => p.channel))], start: ymd(dates[0]), end: ymd(dates[dates.length - 1])
   });
-  await Promise.all(posts.map(p => api('POST', '/posts', { campaign: camp.id, channel: p.channel, text: p.text, at: p.at.toISOString(), status: asDraft ? 'טיוטה' : 'מתוזמן' })));
+  await Promise.all(posts.map(p => api('POST', '/posts', { campaign: camp.id, channel: p.channel, text: p.text, image: p.image, at: p.at.toISOString(), status: asDraft ? 'טיוטה' : 'מתוזמן' })));
   $('#quick').close();
   await refresh();
   document.querySelector('[data-tab=content]').click();
@@ -278,6 +351,7 @@ function renderSettings() {
         ${g.test ? `<button type="button" data-act="test" data-service="${g.test}">בדיקת חיבור</button>` : ''}
         <span class="test-result" role="status"></span>
       </div></form>`).join('');
+  if (typeof renderWorkspaceAdmin === 'function') renderWorkspaceAdmin();
 }
 
 const settingsValues = form => Object.fromEntries(new FormData(form));
@@ -322,6 +396,7 @@ function render() {
   $('#insights-ai').hidden = !caps.ai;
   renderCampaigns(); renderPosts(); renderLeads(); renderReports(); renderDash();
   if (typeof renderPlan === 'function') renderPlan();
+  if (typeof renderExtras === 'function') renderExtras();
 }
 
 // stats
@@ -347,11 +422,14 @@ function renderCampaigns() {
       <div class="meta">יעד: ${esc(c.goal)} · ${esc(c.start || '?')} – ${esc(c.end || '?')}</div>
       <div>${c.channels.map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
       ${c.audience ? `<div>קהל: ${esc(c.audience)}</div>` : ''}${c.message ? `<div>מסר: ${esc(c.message)}</div>` : ''}
-      <div class="meta">תקציב ${money(c.budget)} · הוצאה ${money(c.spent)} · לידים ${s.leads}${c.target ? '/' + c.target : ''}</div>
+      <div class="meta">תקציב ${money(c.budget)} · הוצאה ${money(c.spent)} · לידים ${s.leads}${c.target ? '/' + c.target : ''}${c.clicks ? ` · קליקים ${c.clicks} · חשיפות ${c.impressions}` : ''}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
       <div class="acts">
         <button data-act="ai-plan" data-id="${c.id}">✨ תכנון תוכן אוטומטי</button>
         <button data-act="copy-link" data-id="${c.id}">🔗 קישור מעקב</button>
+        <button data-act="copy-link" data-id="${c.id}" data-v="A" title="בדיקת A/B: השתמשו בקישור A בפוסטים אחד, ובקישור B באחרים">🧪 A</button>
+        <button data-act="copy-link" data-id="${c.id}" data-v="B">🧪 B</button>
+        <button data-act="fb-campaign" data-id="${c.id}">${c.fbCampaign ? '🔌 מחובר לקידום' : '🔌 חיבור לקידום ממומן'}</button>
         <button data-act="spend" data-id="${c.id}">עדכון הוצאה</button>
         <button data-act="toggle-campaign" data-id="${c.id}">${c.status === 'פעיל' ? 'סיום' : 'הפעלה מחדש'}</button>
         <button class="danger" data-act="del-campaign" data-id="${c.id}">מחיקה</button>
@@ -359,17 +437,24 @@ function renderCampaigns() {
   }).join('') || '<p class="meta">אין קמפיינים עדיין. לחצו "קמפיין חדש".</p>';
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => new Date().toLocaleDateString('sv'); // local date, YYYY-MM-DD
 function renderPosts() {
   const posts = [...db.posts].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
   $('#post-list').innerHTML = posts.map(p => {
-    const due = ['ידני','נכשל'].includes(p.status);
+    const due = ['ידני', 'נכשל', 'ממתין לבדיקה'].includes(p.status);
+    const eng = (p.likes || 0) + (p.comments || 0) + (p.shares || 0);
     return `<article class="item ${due ? 'due' : ''}">
       <div><span class="tag">${esc(p.channel)}</span><span class="tag">${esc(p.status)}</span>${due ? '<span class="tag">⏰ דורש טיפול</span>' : ''}${p.error ? `<span class="tag">${esc(p.error)}</span>` : ''}</div>
       <div class="meta">${esc(p.date)} ${esc(p.time)} · ${esc(campName(p.campaign))}</div>
+      ${thumb(p.image)}
       <div style="white-space:pre-wrap">${esc(p.text)}</div>
+      ${p.status !== 'פורסם' ? riskHtml(p.risk) : ''}
+      ${p.metricsAt ? `<div class="meta">👍 ${p.likes || 0} · 💬 ${p.comments || 0} · ↗ ${p.shares || 0}${eng ? '' : ' (עדיין אין אינטראקציה)'}</div>` : ''}
       <div class="acts">
         <button data-act="copy" data-id="${p.id}">העתקה</button>
+        ${p.status !== 'פורסם' ? `<button data-act="attach-image" data-id="${p.id}">📷 ${p.image ? 'החלפת תמונה' : 'הוספת תמונה'}</button>` : ''}
+        ${p.risk?.level && caps.ai && p.status !== 'פורסם' ? `<button data-act="fix-ai" data-id="${p.id}">✨ תקנו את הניסוח עם AI</button>` : ''}
+        ${p.status === 'ממתין לבדיקה' ? `<button data-act="override" data-id="${p.id}">אשרו בכל זאת</button>` : ''}
         ${p.status === 'טיוטה' ? `<button data-act="approve" data-id="${p.id}">אישור לפרסום</button>` : ''}${p.status !== 'פורסם' ? `<button data-act="published" data-id="${p.id}">סימון כפורסם</button>` : ''}
         <button class="danger" data-act="del-post" data-id="${p.id}">מחיקה</button>
       </div></article>`;
@@ -382,8 +467,12 @@ function renderLeads() {
     return `<div class="col"><h4>${st} (${ls.length})</h4>${ls.map(l => `<div class="lead">
       <b>${esc(l.name)}</b>
       <span>${esc(l.phone)} ${esc(l.email)}</span>
-      <span class="meta">${esc(campName(l.campaign))} · ${money(l.value)}</span>
+      <span class="meta">${esc(campName(l.campaign))} · ${money(l.value)}${l.variant ? ` · גרסה ${esc(l.variant)}` : ''}</span>
+      ${l.note ? `<span class="note">${esc(l.note)}</span>` : ''}
+      ${!['נסגר', 'אבוד'].includes(l.stage) ? `<label class="followup ${l.next && l.next <= today() ? 'due-date' : ''}">🔔 מעקב: <input type="date" class="nextdate" data-id="${l.id}" value="${esc(l.next || '')}" aria-label="תאריך מעקב"></label>` : ''}
       <div class="acts">
+        ${!['נסגר', 'אבוד'].includes(l.stage) ? `<button data-act="contacted" data-id="${l.id}" title="מקדם את תאריך המעקב: 3 ימים, אחר כך 7">✓ יצרתי קשר</button>` : ''}
+        <button data-act="edit-note" data-id="${l.id}" title="הערה">✎</button>
         ${i > 0 ? `<button data-act="move" data-id="${l.id}" data-stage="${STAGES[i - 1]}">→</button>` : ''}
         ${i < STAGES.length - 1 ? `<button data-act="move" data-id="${l.id}" data-stage="${STAGES[i + 1]}">←</button>` : ''}
         <button data-act="move" data-id="${l.id}" data-stage="אבוד">✕</button>
@@ -405,6 +494,8 @@ function renderDash() {
   const t = totals();
   const due = db.posts.filter(p => ['ידני','נכשל'].includes(p.status));
   const stale = db.leads.filter(l => l.stage === 'חדש' && (Date.now() - new Date(l.created)) > 2 * 864e5);
+  const follow = db.leads.filter(l => l.next && l.next <= today() && !['נסגר', 'אבוד'].includes(l.stage));
+  const held = db.posts.filter(p => p.status === 'ממתין לבדיקה');
   $('#dash').innerHTML = `<div class="bar"><h2>סקירה</h2><button class="btn" data-act="quick-open">✨ קמפיין בדקה</button></div>
     ${typeof planNextHtml === 'function' ? planNextHtml() : ''}
     <div class="kpis">
@@ -415,8 +506,10 @@ function renderDash() {
     </div>
     <h3>משימות להיום</h3>
     ${due.map(p => `<div class="item due">⏰ לפרסם ב${esc(p.channel)}: ${esc(p.text.slice(0, 80))}</div>`).join('')}
+    ${held.map(p => `<div class="item due">🛑 פוסט נעצר בבדיקת תאימות: ${esc(p.text.slice(0, 80))}</div>`).join('')}
+    ${follow.map(l => `<div class="item due">🔔 היום לחזור אל ${esc(l.name)} ${esc(l.phone)} ${waLink(l.phone) ? `<a href="${waLink(l.phone)}" target="_blank" rel="noopener">💬</a>` : ''}</div>`).join('')}
     ${stale.map(l => `<div class="item due">📞 ליד ממתין יותר מיומיים: ${esc(l.name)} ${esc(l.phone)}</div>`).join('')}
-    ${due.length + stale.length ? '' : '<p class="meta">אין משימות דחופות 🎉</p>'}
+    ${due.length + stale.length + follow.length + held.length ? '' : '<p class="meta">אין משימות דחופות 🎉</p>'}
     <h3>מצב אוטומציה</h3>
     <p class="meta">פרסום: ${[caps.facebook && 'פייסבוק', caps.telegram && 'טלגרם', caps.webhook && 'Webhook'].filter(Boolean).join(', ') || 'לא מחובר – פוסטים יסומנו לפרסום ידני'} · AI: ${caps.ai ? 'פעיל' : 'לא מוגדר'}</p>
     ${me?.role === 'admin' ? `<h3>הוספת איש צוות</h3><form id="user-form" class="panel"><div class="row"><label>שם <input name="name"></label><label>אימייל <input name="email" type="email" required></label><label>סיסמה (8+) <input name="password" type="password" minlength="8" required></label><label>תפקיד <select name="role"><option value="member">חבר צוות</option><option value="admin">מנהל</option></select></label></div><button class="btn btn-sm">הוספה</button></form>` : ''}
@@ -427,8 +520,9 @@ function renderDash() {
 function renderReports() {
   const t = totals();
   const rows = db.campaigns.map(c => { const s = stats(c);
-    return `<tr><td>${esc(c.name)}</td><td>${money(c.spent)}</td><td>${s.leads}</td><td>${money(s.cpl)}</td><td>${s.won}</td><td>${money(s.cac)}</td><td>${money(s.revenue)}</td><td>${s.roas.toFixed(2)}x</td><td>${s.conv.toFixed(0)}%</td></tr>`; }).join('');
-  $('#reports-body').innerHTML = `<h2>דוחות</h2>
+    const vs = Object.entries(db.leads.filter(l => l.campaign === c.id && l.variant).reduce((m, l) => { (m[l.variant] ||= { leads: 0, won: 0 }); m[l.variant].leads++; if (l.stage === 'נסגר') m[l.variant].won++; return m; }, {}));
+    return `<tr><td>${esc(c.name)}${vs.length ? `<div class="meta">🧪 ${vs.map(([k, v]) => `גרסה ${esc(k)}: ${v.leads} פניות`).join(' · ')}</div>` : ''}</td><td>${money(c.spent)}</td><td>${s.leads}</td><td>${money(s.cpl)}</td><td>${s.won}</td><td>${money(s.cac)}</td><td>${money(s.revenue)}</td><td>${s.roas.toFixed(2)}x</td><td>${s.conv.toFixed(0)}%</td></tr>`; }).join('');
+  $('#reports-body').innerHTML = `<div class="bar"><h2>דוחות</h2>${caps.facebook ? '<button class="btn btn-sm btn-ghost" data-act="sync">🔄 סנכרון נתונים מפייסבוק</button>' : ''}</div>
     <div class="kpis">
       <div class="kpi"><b>${money(t.cpl)}</b>עלות לליד</div>
       <div class="kpi"><b>${t.roas.toFixed(2)}x</b>החזר על הוצאה</div>
