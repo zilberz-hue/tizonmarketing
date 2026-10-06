@@ -69,10 +69,18 @@ function limited(key, max, windowMs) {
 }
 
 // --- connectors ---
-const timeout = () => AbortSignal.timeout(15000);
+// Calls to outside services (AI, Facebook, Telegram, email, webhooks). Failures become a 502 whose message
+// says which service failed and why, instead of a generic "server error". Secrets are never part of the message.
+async function ext(url, init, ms = 15000) {
+  const host = new URL(url).hostname;
+  let r;
+  try { r = await fetch(url, { ...init, signal: AbortSignal.timeout(ms) }); }
+  catch (e) { throw httpErr(502, `${host}: ${e.name === 'TimeoutError' ? 'השירות לא ענה בזמן' : 'לא ניתן להתחבר לשירות'}`); }
+  if (!r.ok) throw httpErr(502, `${host} ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return r;
+}
 async function postJson(url, body, headers = {}) {
-  const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal: timeout() });
-  if (!r.ok) throw new Error(`${new URL(url).hostname} ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const r = await ext(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
   return r.json().catch(() => ({}));
 }
 const tgApi = m => `${env('TELEGRAM_API_URL') || 'https://api.telegram.org'}/bot${env('TG_BOT_TOKEN')}/${m}`;
@@ -83,8 +91,7 @@ const fbApi = () => env('FACEBOOK_API_URL') || 'https://graph.facebook.com/v19.0
 let lastOrigin = '';
 const siteBase = () => (env('SITE_URL') || process.env.URL || lastOrigin).replace(/\/$/, '');
 async function postForm(url, fd) {
-  const r = await fetch(url, { method: 'POST', body: fd, signal: AbortSignal.timeout(30000) });
-  if (!r.ok) throw new Error(`${new URL(url).hostname} ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const r = await ext(url, { method: 'POST', body: fd }, 30000);
   return r.json().catch(() => ({}));
 }
 const connectors = () => ({
@@ -96,9 +103,7 @@ const connectors = () => ({
 });
 
 async function getJson(url) {
-  const r = await fetch(url, { signal: timeout() });
-  if (!r.ok) throw new Error(`${new URL(url).hostname} ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  return r.json();
+  return (await ext(url, {})).json();
 }
 async function sendEmail(to, subject, text) {
   if (!connectors().email) throw new Error('האימייל לא מוגדר');
@@ -197,9 +202,10 @@ async function notify(text, event = 'notify', data = {}) {
 // --- AI ---
 async function claude(prompt, max = 1500) {
   if (!env('ANTHROPIC_API_KEY')) throw httpErr(400, 'לא הוגדר ANTHROPIC_API_KEY');
-  const r = await postJson(env('ANTHROPIC_API_URL') || 'https://api.anthropic.com/v1/messages',
-    { model: env('AI_MODEL') || 'claude-sonnet-5-5', max_tokens: max, messages: [{ role: 'user', content: prompt }] },
-    { 'x-api-key': env('ANTHROPIC_API_KEY'), 'anthropic-version': '2023-06-01' });
+  const r = await (await ext(env('ANTHROPIC_API_URL') || 'https://api.anthropic.com/v1/messages', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': env('ANTHROPIC_API_KEY'), 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: env('AI_MODEL') || 'claude-sonnet-5-5', max_tokens: max, messages: [{ role: 'user', content: prompt }] })
+  }, 60000)).json().catch(() => ({}));
   return (r.content || []).map(b => b.text || '').join('').trim();
 }
 const brief = c => c ? `קמפיין: ${c.name}\nיעד: ${c.goal}\nקהל: ${c.audience}\nמסר: ${c.message}\nערוצים: ${(c.channels || []).join(', ')}` : '';
@@ -247,7 +253,7 @@ function cleanDraft(d, channels, days) {
  *   claim(kind,id,fromStatus,toStatus) -> bool   // atomic status change, prevents double publishing
  * }
  */
-export function createApp(store) {
+export function createApp(store, opts = {}) {
   let bootstrapped;
   const ensureAdmin = () => bootstrapped ??= (async () => {
     if (await store.userCount()) return;
@@ -309,6 +315,7 @@ export function createApp(store) {
 
   async function tick(now = Date.now()) {
     await ensureAdmin();
+    for (const j of await store.list('jobs')) if (Date.parse(j.created) < now - 864e5) await store.del('jobs', j.id);
     for (const { id: ws } of await listWorkspaces()) {
       const S = scoped(ws);
       await runWith({ ws, overrides: await loadSettings(S, ws) }, () => tickWorkspace(S, now)).catch(e => console.error('tick', ws, e));
@@ -391,6 +398,81 @@ export function createApp(store) {
     }
     await syncMetrics(store, now).catch(e => console.error('metrics:', e.message));
     await digest(store, now).catch(e => console.error('digest:', e.message));
+  }
+
+
+  // ---- AI tasks. Inline by default; with opts.startJob (Netlify background functions) they run as background
+  // jobs, because ordinary serverless functions time out long before a full campaign has been generated. ----
+  const aiTasks = {
+    async generate(S, b) {
+      const c = await S.get('campaigns', String(b.campaign || ''));
+      return { text: await claude(`אתה קופירייטר שיווקי בעברית. כתוב פוסט אחד לערוץ ${String(b.channel).slice(0, 30)} בלבד, בלי הקדמות ובלי הסברים.\n${brief(c)}\nהנחיה נוספת: ${String(b.brief || '').slice(0, 500)}`, 700) };
+    },
+    async 'quick-campaign'(S, b) {
+      const idea = String(b.idea || '').trim().slice(0, 600);
+      if (idea.length < 3) throw httpErr(400, 'ספרו במשפט אחד מה רוצים לקדם');
+      const days = clamp(Math.round(+b.days || 7), 1, 30);
+      const channels = (Array.isArray(b.channels) ? b.channels : []).filter(x => CHANNELS.includes(x)).slice(0, 6);
+      if (!channels.length) channels.push('Facebook');
+      if (!env('ANTHROPIC_API_KEY')) return { ai: false, draft: cleanDraft(fallbackDraft(idea, channels, days), channels, days) };
+      const n = Math.min(days, 10);
+      const raw = await claude(`אתה אסטרטג שיווק ישראלי. בנה קמפיין שלם בעברית לפי הרעיון.
+חוקים: בלי הבטחות רפואיות או טענות ריפוי, בלי "לפני/אחרי", בלי מספרים או עובדות שלא ניתנו, קריאה אחת לפעולה בכל פוסט, טקסט קצר וברור, אימוג'י במידה.
+${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0, 500) + '\n' : ''}החזר JSON תקין בלבד, בלי הסברים: {"name":"שם קצר","goal":"אחד מ: ${GOALS.join(', ')}","audience":"תיאור קהל היעד","message":"המסר המרכזי בשורה אחת","posts":[{"day":0,"channel":"אחד מ: ${channels.join(', ')}","text":"..."}]}
+עד ${n} פוסטים לאורך ${days} ימים (day מ-0 עד ${days - 1}), מפוזרים בין הערוצים.
+הרעיון: ${idea}`, 3500);
+      let d; try { d = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); } catch { throw httpErr(502, 'ה-AI החזיר תשובה לא תקינה, נסו שוב'); }
+      const draft = cleanDraft(d, channels, days);
+      if (!draft.posts.length) throw httpErr(502, 'ה-AI לא החזיר פוסטים, נסו שוב');
+      return { ai: true, draft };
+    },
+    async plan(S, b) {
+      const c = await S.get('campaigns', String(b.campaign || ''));
+      if (!c) throw httpErr(404, 'קמפיין לא נמצא');
+      const days = Math.min(Math.max(+b.days || 7, 1), 30);
+      const raw = await claude(`תכנן לוח תוכן שיווקי בעברית ל-${days} ימים עבור הקמפיין. החזר JSON תקין בלבד: מערך של אובייקטים {"day":0..${days - 1},"channel":"אחד מ: ${(c.channels.length ? c.channels : ['Facebook']).join(', ')}","text":"..."}. עד 10 פוסטים.\n${brief(c)}`, 3000);
+      let arr; try { arr = JSON.parse(raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1)); } catch { throw httpErr(502, 'ה-AI החזיר תשובה לא תקינה, נסו שוב'); }
+      const start = Date.parse((c.start || new Date().toISOString().slice(0, 10)) + 'T10:00:00');
+      const status = env('AUTO_APPROVE') === 'true' ? 'מתוזמן' : 'טיוטה';
+      let created = 0;
+      for (const x of arr.slice(0, 10)) {
+        await S.put('posts', uid(), pick('posts', { campaign: c.id, channel: x.channel, text: x.text, status, at: new Date(start + (+x.day || 0) * 864e5).toISOString() }));
+        created++;
+      }
+      return { created, status };
+    },
+    async fix(S, b) {
+      const text = String(b.text || '').slice(0, 4000);
+      const fixed = await claude(fixPrompt(text, checkText(text).findings, env('BUSINESS_PROFILE')), 800);
+      return { text: fixed, risk: checkText(fixed) };
+    },
+    async insights(S) {
+      const st = await computeStats(S);
+      const lines = parseBullets(await claude(insightsPrompt(st, env('BUSINESS_PROFILE')), 900));
+      return lines.length ? { ai: true, insights: lines } : { ai: false, insights: ruleInsights(st) };
+    }
+  };
+
+  async function runAi(S, user, ws, kind, params) {
+    if (!opts.startJob || !env('ANTHROPIC_API_KEY')) return aiTasks[kind](S, params);
+    const id = crypto.randomBytes(12).toString('hex');
+    const rec = { ws, kind, params, user: user.email, status: 'pending', created: new Date().toISOString() };
+    await base.put('jobs', id, rec);
+    try { await opts.startJob(id); }
+    catch (e) { await base.put('jobs', id, { ...rec, status: 'error', error: 'לא ניתן להפעיל משימת רקע' }); throw httpErr(502, 'לא ניתן להפעיל משימת רקע: ' + String(e.message).slice(0, 120)); }
+    return { job: id };
+  }
+
+  // Executes a queued job (called from the background function, or directly in tests).
+  async function runJob(id) {
+    const j = await base.get('jobs', id);
+    if (!j || j.status !== 'pending') return;
+    await base.put('jobs', id, { ...j, status: 'running' });
+    const S = scoped(j.ws);
+    await runWith({ ws: j.ws, overrides: await loadSettings(S, j.ws) }, async () => {
+      try { await base.put('jobs', id, { ...j, status: 'done', result: await aiTasks[j.kind](S, j.params), finished: new Date().toISOString() }); }
+      catch (e) { await base.put('jobs', id, { ...j, status: 'error', error: String(e.message).slice(0, 300), finished: new Date().toISOString() }); }
+    });
   }
 
   async function api(req, res, url, store, user, ws) {
@@ -521,8 +603,7 @@ export function createApp(store) {
       if (parts[1] === 'fix') {
         if (!env('ANTHROPIC_API_KEY')) throw httpErr(400, 'לתיקון אוטומטי נדרש מפתח AI בהגדרות');
         if (limited('ai:' + user.email, 30, 3600e3)) throw httpErr(429, 'חריגה ממכסת AI לשעה');
-        const fixed = await claude(fixPrompt(text, checkText(text).findings, env('BUSINESS_PROFILE')), 800);
-        return send(res, 200, { text: fixed, risk: checkText(fixed) });
+        return send(res, 200, await runAi(store, user, ws, 'fix', { text }));
       }
     }
 
@@ -567,57 +648,25 @@ export function createApp(store) {
       }
     }
 
-    if (parts[0] === 'insights' && method === 'POST') {
-      const { ai } = await readBody(req);
-      const st = await computeStats(store);
-      if (ai && env('ANTHROPIC_API_KEY')) {
-        if (limited('ai:' + user.email, 30, 3600e3)) throw httpErr(429, 'חריגה ממכסת AI לשעה');
-        const lines = parseBullets(await claude(insightsPrompt(st, env('BUSINESS_PROFILE')), 900));
-        if (lines.length) return send(res, 200, { ai: true, insights: lines });
-      }
-      return send(res, 200, { ai: false, insights: ruleInsights(st) });
+    if (parts[0] === 'jobs' && parts[1] && method === 'GET') {
+      const j = /^[a-f0-9]{24}$/.test(parts[1]) ? await base.get('jobs', parts[1]) : null;
+      if (!j || j.ws !== ws || (j.user !== user.email && user.role !== 'admin')) throw httpErr(404, 'לא נמצא');
+      return send(res, 200, { status: j.status, ...(j.status === 'done' ? { result: j.result } : {}), ...(j.status === 'error' ? { error: j.error } : {}) });
     }
 
-    if (parts[0] === 'ai') {
-      if (limited('ai:' + user.email, 30, 3600e3)) throw httpErr(429, 'חריגה ממכסת AI לשעה');
+    const aiLimit = () => { if (limited('ai:' + user.email, 30, 3600e3)) throw httpErr(429, 'חריגה ממכסת AI לשעה'); };
+    if (parts[0] === 'insights' && method === 'POST') {
+      const { ai } = await readBody(req);
+      if (ai && env('ANTHROPIC_API_KEY')) { aiLimit(); return send(res, 200, await runAi(store, user, ws, 'insights', {})); }
+      return send(res, 200, { ai: false, insights: ruleInsights(await computeStats(store)) });
+    }
+
+    if (parts[0] === 'ai' && method === 'POST') {
+      aiLimit();
       const b = await readBody(req);
-      const c = await store.get('campaigns', String(b.campaign || ''));
-      if (parts[1] === 'generate') {
-        const text = await claude(`אתה קופירייטר שיווקי בעברית. כתוב פוסט אחד לערוץ ${String(b.channel).slice(0, 30)} בלבד, בלי הקדמות ובלי הסברים.\n${brief(c)}\nהנחיה נוספת: ${String(b.brief || '').slice(0, 500)}`, 700);
-        return send(res, 200, { text });
-      }
-      if (parts[1] === 'quick-campaign') {
-        const idea = String(b.idea || '').trim().slice(0, 600);
-        if (idea.length < 3) throw httpErr(400, 'ספרו במשפט אחד מה רוצים לקדם');
-        const days = clamp(Math.round(+b.days || 7), 1, 30);
-        const channels = (Array.isArray(b.channels) ? b.channels : []).filter(x => CHANNELS.includes(x)).slice(0, 6);
-        if (!channels.length) channels.push('Facebook');
-        if (!env('ANTHROPIC_API_KEY')) return send(res, 200, { ai: false, draft: cleanDraft(fallbackDraft(idea, channels, days), channels, days) });
-        const n = Math.min(days, 10);
-        const raw = await claude(`אתה אסטרטג שיווק ישראלי. בנה קמפיין שלם בעברית לפי הרעיון.
-חוקים: בלי הבטחות רפואיות או טענות ריפוי, בלי "לפני/אחרי", בלי מספרים או עובדות שלא ניתנו, קריאה אחת לפעולה בכל פוסט, טקסט קצר וברור, אימוג'י במידה.
-${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0, 500) + '\n' : ''}החזר JSON תקין בלבד, בלי הסברים: {"name":"שם קצר","goal":"אחד מ: ${GOALS.join(', ')}","audience":"תיאור קהל היעד","message":"המסר המרכזי בשורה אחת","posts":[{"day":0,"channel":"אחד מ: ${channels.join(', ')}","text":"..."}]}
-עד ${n} פוסטים לאורך ${days} ימים (day מ-0 עד ${days - 1}), מפוזרים בין הערוצים.
-הרעיון: ${idea}`, 3500);
-        let d; try { d = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); } catch { throw httpErr(502, 'ה-AI החזיר תשובה לא תקינה, נסו שוב'); }
-        const draft = cleanDraft(d, channels, days);
-        if (!draft.posts.length) throw httpErr(502, 'ה-AI לא החזיר פוסטים, נסו שוב');
-        return send(res, 200, { ai: true, draft });
-      }
-      if (parts[1] === 'plan') {
-        if (!c) throw httpErr(404, 'קמפיין לא נמצא');
-        const days = Math.min(Math.max(+b.days || 7, 1), 30);
-        const raw = await claude(`תכנן לוח תוכן שיווקי בעברית ל-${days} ימים עבור הקמפיין. החזר JSON תקין בלבד: מערך של אובייקטים {"day":0..${days - 1},"channel":"אחד מ: ${(c.channels.length ? c.channels : ['Facebook']).join(', ')}","text":"..."}. עד 10 פוסטים.\n${brief(c)}`, 3000);
-        let arr; try { arr = JSON.parse(raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1)); } catch { throw httpErr(502, 'ה-AI החזיר תשובה לא תקינה, נסו שוב'); }
-        const base = Date.parse((c.start || new Date().toISOString().slice(0, 10)) + 'T10:00:00');
-        const status = env('AUTO_APPROVE') === 'true' ? 'מתוזמן' : 'טיוטה';
-        let created = 0;
-        for (const x of arr.slice(0, 10)) {
-          await store.put('posts', uid(), pick('posts', { campaign: c.id, channel: x.channel, text: x.text, status, at: new Date(base + (+x.day || 0) * 864e5).toISOString() }));
-          created++;
-        }
-        return send(res, 201, { created, status });
-      }
+      if (parts[1] === 'quick-campaign' && String(b.idea || '').trim().length < 3) throw httpErr(400, 'ספרו במשפט אחד מה רוצים לקדם');
+      if (parts[1] === 'plan' && !(await store.get('campaigns', String(b.campaign || '')))) throw httpErr(404, 'קמפיין לא נמצא');
+      if (['generate', 'quick-campaign', 'plan'].includes(parts[1])) return send(res, 200, await runAi(store, user, ws, parts[1], b));
     }
 
     if (SCHEMA[parts[0]]) {
@@ -665,5 +714,5 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
       });
     }
   };
-  return { handle, tick, ensureAdmin };
+  return { handle, tick, ensureAdmin, runJob };
 }

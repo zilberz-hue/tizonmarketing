@@ -25,6 +25,7 @@ const mock2 = http.createServer((req, res) => {
       if (req.url.includes('fan_count')) return res.end(JSON.stringify({ fan_count: 321 }));
       if (req.url.includes('reactions')) return res.end(JSON.stringify({ reactions: { summary: { total_count: 7 } }, comments: { summary: { total_count: 2 } }, shares: { count: 1 } }));
     }
+    if (req.url === '/anthropic-bad') { res.statusCode = 401; return res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } })); }
     if (req.url === '/anthropic') {
       const prompt = body.messages?.[0]?.content || '';
       const text = prompt.includes('"posts"') ? JSON.stringify({ name: 'קמפיין AI', goal: 'מכירות', audience: 'קהל', message: 'מסר', posts: [{ day: 0, channel: 'Facebook', text: 'פוסט א' }, { day: 3, channel: 'Nope', text: 'פוסט ב' }] })
@@ -320,6 +321,21 @@ assert.equal(leadsNow.find(l => l.name === 'זר').campaign, '');
   assert.equal((await call('GET', '/api/state')).data.leads.find(l => l.name === 'abA0').variant, 'A');
   const abIns = (await call('POST', '/api/insights', {})).data.insights.find(i => i.startsWith('🧪'));
   assert.ok(abIns && abIns.includes('גרסה A מביאה 5 פניות מול 2'), abIns);
+}
+
+// An external-service failure must say what failed (502), never a generic server error
+{
+  const good = process.env.ANTHROPIC_API_URL;
+  process.env.ANTHROPIC_API_URL = m2 + '/anthropic-bad';
+  const bad = await call('POST', '/api/ai/generate', { channel: 'Facebook', brief: 'x' });
+  assert.equal(bad.status, 502);
+  assert.match(bad.data.error, /401/); assert.match(bad.data.error, /invalid x-api-key/);
+  const badPlan = await call('POST', '/api/ai/quick-campaign', { idea: 'רעיון כלשהו', channels: ['Facebook'], days: 7 });
+  assert.equal(badPlan.status, 502, 'quick campaign reports the AI failure');
+  process.env.ANTHROPIC_API_URL = 'http://127.0.0.1:1/unreachable';
+  const down = await call('POST', '/api/ai/generate', { channel: 'Facebook', brief: 'x' });
+  assert.equal(down.status, 502); assert.match(down.data.error, /לא ניתן להתחבר/);
+  process.env.ANTHROPIC_API_URL = good;
 }
 
 // work-plan checklist: shared, validated, returned in /state

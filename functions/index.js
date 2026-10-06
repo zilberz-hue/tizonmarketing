@@ -44,7 +44,7 @@ const store = {
 const app = createApp(store);
 
 // Netlify proxies /api/* here; the function sees paths like /login, /state, /posts/ID.
-export const api = onRequest({ cors: false, timeoutSeconds: 60 }, (req, res) =>
+export const api = onRequest({ cors: false, timeoutSeconds: 300 }, (req, res) =>
   app.handle(req, res, new URL(req.originalUrl || req.url, 'http://x')));
 
 // The autonomous part: publishes due posts and flags stale leads every minute.

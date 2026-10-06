@@ -27,6 +27,19 @@ async function api(method, path, body) {
   if (!r.ok) throw new Error((d.error || 'שגיאה') + (d.detail ? ` (${d.detail})` : ''));
   return d;
 }
+// AI calls can take a while. The server may answer { job } and finish in the background: poll until done.
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function aiCall(path, body) {
+  const r = await api('POST', path, body);
+  if (!r.job) return r;
+  for (let i = 0; i < 100; i++) {
+    await sleep(2000);
+    const j = await api('GET', '/jobs/' + r.job);
+    if (j.status === 'done') return j.result;
+    if (j.status === 'error') throw new Error(j.error || 'המשימה נכשלה');
+  }
+  throw new Error('המשימה לוקחת יותר מדי זמן. נסו שוב בעוד רגע');
+}
 const safe = fn => async (...a) => { try { await fn(...a); } catch (e) { if (e.message !== 'auth') alert(e.message); } };
 
 const riskHtml = r => r?.level ? `<div class="risk ${r.level}"><b>${r.level === 'high' ? '🔴 ניסוח רפואי בעייתי: לא יפורסם אוטומטית' : '🟠 כדאי לבדוק את הניסוח'}</b><ul>${r.findings.map(f => `<li><b>"${esc(f.match)}"</b>: ${esc(f.why)}. ${esc(f.fix)}</li>`).join('')}</ul></div>` : '';
@@ -123,7 +136,7 @@ $('#ai-text').onclick = safe(async () => {
   const t = prompt('על מה הפוסט? (הנחיה קצרה, אפשר להשאיר ריק)', '');
   if (t === null) return;
   $('#ai-text').disabled = true;
-  try { $('#post-form [name=text]').value = (await api('POST', '/ai/generate', { campaign: f.campaign, channel: f.channel, brief: t })).text; }
+  try { $('#post-form [name=text]').value = (await aiCall('/ai/generate', { campaign: f.campaign, channel: f.channel, brief: t })).text; }
   finally { $('#ai-text').disabled = false; }
 });
 
@@ -150,7 +163,7 @@ document.addEventListener('click', safe(async e => {
   if (act === 'override') { if (!confirm('לאשר פרסום למרות הניסוח שסומן? האחריות על התוכן עליכם.')) return; await api('PUT', '/posts/' + id, { override: 1, status: 'מתוזמן', error: '' }); await refresh(); toast('הפוסט אושר ויפורסם בקרוב'); return; }
   if (act === 'fix-ai') {
     const p = db.posts.find(x => x.id === id); b.disabled = true; b.textContent = 'מתקן…';
-    try { const r = await api('POST', '/compliance/fix', { text: p.text }); if (!confirm('הנוסח המתוקן:\n\n' + r.text + '\n\nלהחליף?')) return; await api('PUT', '/posts/' + id, { text: r.text, status: p.status === 'ממתין לבדיקה' ? 'מתוזמן' : p.status, error: '' }); await refresh(); toast('הניסוח עודכן'); } finally { b.disabled = false; }
+    try { const r = await aiCall('/compliance/fix', { text: p.text }); if (!confirm('הנוסח המתוקן:\n\n' + r.text + '\n\nלהחליף?')) return; await api('PUT', '/posts/' + id, { text: r.text, status: p.status === 'ממתין לבדיקה' ? 'מתוזמן' : p.status, error: '' }); await refresh(); toast('הניסוח עודכן'); } finally { b.disabled = false; }
     return;
   }
   if (act === 'contacted') { await api('POST', `/leads/${id}/contacted`, {}); await refresh(); toast('נרשם. תאריך המעקב הבא עודכן'); return; }
@@ -169,7 +182,7 @@ document.addEventListener('click', safe(async e => {
   else if (act === 'ai-plan') {
     const d = prompt('לכמה ימים לתכנן תוכן?', '7'); if (d === null) return;
     b.disabled = true; b.textContent = 'מייצר...';
-    try { const r = await api('POST', '/ai/plan', { campaign: id, days: +d }); alert(`נוצרו ${r.created} פוסטים (${r.status}). ${r.status === 'טיוטה' ? 'אשרו אותם בלוח התוכן כדי שיתפרסמו.' : ''}`); }
+    try { const r = await aiCall('/ai/plan', { campaign: id, days: +d }); alert(`נוצרו ${r.created} פוסטים (${r.status}). ${r.status === 'טיוטה' ? 'אשרו אותם בלוח התוכן כדי שיתפרסמו.' : ''}`); }
     finally { b.disabled = false; }
   }
   else if (act === 'del-post') await api('DELETE', '/posts/' + id);
@@ -225,9 +238,9 @@ $('#quick-body').addEventListener('submit', safe(async e => {
   if (e.target.id === 'quick-form') {
     e.preventDefault();
     const f = new FormData(e.target), btn = e.target.querySelector('button[type=submit]');
-    btn.disabled = true; btn.textContent = 'בונה את הקמפיין…';
+    btn.disabled = true; btn.textContent = 'בונה את הקמפיין… (עד כדקה)';
     try {
-      const r = await api('POST', '/ai/quick-campaign', { idea: f.get('idea'), channels: f.getAll('ch'), days: +f.get('days') });
+      const r = await aiCall('/ai/quick-campaign', { idea: f.get('idea'), channels: f.getAll('ch'), days: +f.get('days') });
       renderQuickPreview(r.draft, +f.get('days'));
     } finally { btn.disabled = false; btn.textContent = '✨ צרו לי קמפיין'; }
   } else if (e.target.id === 'quick-launch') {
@@ -381,7 +394,7 @@ async function loadInsights(ai) {
   const list = $('#insights-list');
   list.innerHTML = '<li class="meta">מנתח…</li>';
   try {
-    const r = await api('POST', '/insights', { ai });
+    const r = await aiCall('/insights', { ai });
     list.innerHTML = r.insights.map(i => `<li>${esc(i)}</li>`).join('') || '<li class="meta">אין תובנות כרגע</li>';
     if (ai && !r.ai) toast('ניתוח AI לא זמין, מוצגות תובנות בסיסיות');
   } catch (e) { list.innerHTML = e.message === 'auth' ? '' : `<li class="meta">${esc(e.message)}</li>`; }
