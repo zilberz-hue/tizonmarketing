@@ -23,6 +23,7 @@ const store = {
     try { await fs.collection('users').doc(docId(email)).create({ email, name, hash, role }); }
     catch (e) { throw e.code === 6 ? Object.assign(new Error('exists'), { code: 'EXISTS' }) : e; }
   },
+  async setRole(email, role) { await fs.collection('users').doc(docId(email)).update({ role }); },
   async createSession(token, email, exp) { await fs.collection('sessions').doc(token).set({ email, exp }); },
   async getSession(token) { const d = await fs.collection('sessions').doc(token).get(); return d.exists ? d.data() : null; },
   async delSession(token) { await fs.collection('sessions').doc(token).delete(); },

@@ -32,6 +32,8 @@ async function renderWorkspaceAdmin() {
         ${w.id !== currentWs ? `<button type="button" data-ws-go="${esc(w.id)}">מעבר</button>` : '<span class="badge auto">פעילה</span>'}</li>`).join('')}</ul>
       <div class="row"><label>לקוח חדש <input name="name" placeholder="שם הלקוח או העסק"></label></div>
       <button class="btn btn-sm" type="submit">הוספת לקוח</button>
+      <h4>תפקידים</h4><p class="meta">מנהל רואה ועורך הכול, כולל הגדרות וצוות. חבר צוות לא רואה הגדרות.</p>
+      <div style="overflow-x:auto"><table>${access.map(u => `<tr><td>${esc(u.name || u.email)}<div class="meta">${esc(u.email)}</div></td><td><select data-role="${esc(u.email)}" aria-label="תפקיד של ${esc(u.email)}"><option value="member" ${u.role !== 'admin' ? 'selected' : ''}>חבר צוות</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>מנהל</option></select></td></tr>`).join('')}</table></div>
       ${access.some(u => u.role !== 'admin') ? `<h4>הרשאות צוות</h4><div style="overflow-x:auto"><table><tr><th>איש צוות</th>${wss.map(w => `<th>${esc(w.name)}</th>`).join('')}</tr>
         ${access.filter(u => u.role !== 'admin').map(u => `<tr><td>${esc(u.name || u.email)}<div class="meta">${esc(u.email)}</div></td>${wss.map(w => `<td><input type="checkbox" data-access="${esc(u.email)}" value="${esc(w.id)}" ${u.workspaces.includes(w.id) ? 'checked' : ''} aria-label="${esc(u.email)} – ${esc(w.name)}"></td>`).join('')}</tr>`).join('')}</table></div>` : '<p class="meta">מנהלים רואים את כל הסביבות. חברי צוות מקבלים גישה לסביבות כאן.</p>'}
     </form>`;
@@ -193,3 +195,9 @@ dragSort({ root: $('#campaign-list'), itemSel: '.item', handleSel: '.handle', co
   onDrop: () => saveCampOrder([...document.querySelectorAll('#campaign-list > .item')].map(el => ({ id: el.dataset.id }))) });
 dragSort({ root: $('#campaign-board'), itemSel: '.kcard', handleSel: '.handle', containerSel: '.kcol',
   onDrop: () => saveCampOrder([...document.querySelectorAll('#campaign-board .kcol')].flatMap(col => [...col.querySelectorAll(':scope > .kcard')].map(el => ({ id: el.dataset.id, status: col.dataset.status })))) });
+
+document.addEventListener('change', safe(async e => {
+  const sel = e.target.closest('[data-role]'); if (!sel) return;
+  try { await api('PUT', '/users', { email: sel.dataset.role, role: sel.value }); toast('התפקיד עודכן'); renderWorkspaceAdmin(); }
+  catch (err) { await renderWorkspaceAdmin(); throw err; }
+}));
