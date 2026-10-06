@@ -25,7 +25,7 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=
 function serveStatic(req, res, url) {
   let p = decodeURIComponent(url.pathname);
   if (p.endsWith('/')) p += 'index.html';
-  const ok = /^\/(index\.html|style\.css|script\.js|assets\/(logo\.webp|favicon\.png|icon-192\.png|icon-512\.png)|app\/(index\.html|app\.css|app\.js|plan\.js|extras\.js|ai-assist\.js|sw\.js|manifest\.webmanifest))$/.test(p);
+  const ok = /^\/(index\.html|style\.css|script\.js|assets\/(logo\.webp|favicon\.png|icon-192\.png|icon-512\.png)|app\/(index\.html|app\.css|app\.js|plan\.js|extras\.js|ai-assist\.js|studio\.js|sw\.js|manifest\.webmanifest))$/.test(p);
   if (!ok) { res.writeHead(404); return res.end('Not found'); }
   const file = path.join(ROOT, p);
   fs.readFile(file, (err, buf) => {

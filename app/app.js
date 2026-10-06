@@ -338,7 +338,7 @@ function renderQuickPreview(d, days) {
         <label>קהל יעד <textarea name="audience" rows="2">${esc(d.audience)}</textarea></label>
         <label>מסר מרכזי <input name="message" value="${esc(d.message)}"></label>
       </div>
-      <div class="bar"><h3>לוח התוכן (${d.posts.length} פוסטים)</h3><button type="button" class="link" id="quick-img-all">📷 תמונה לכל הפוסטים</button></div>
+      <div class="bar"><h3>לוח התוכן (${d.posts.length} פוסטים)</h3><span><button type="button" class="link" id="quick-img-all">📷 תמונה לכל הפוסטים</button> <button type="button" class="link" id="quick-studio-all">🎨 באנר לכולם</button></span></div>
       ${d.posts.map((p, i) => `<div class="qpost" data-i="${i}">
         <div class="qhead">
           <label class="chip"><input type="checkbox" class="inc" checked><span>כלול</span></label>
@@ -349,7 +349,7 @@ function renderQuickPreview(d, days) {
         </div>
         <textarea class="ptext" rows="3" aria-label="טקסט הפוסט">${esc(p.text)}</textarea>
         <div class="qrisk"></div>
-        <div class="qimg"><button type="button" class="link" data-qimg="${i}">📷 הוספת תמונה</button><span class="qthumb"></span></div>
+        <div class="qimg"><button type="button" class="link" data-qimg="${i}">📷 הוספת תמונה</button><button type="button" class="link" data-qstudio="${i}">🎨 באנר</button><span class="qthumb"></span></div>
       </div>`).join('')}
       <div class="qfoot">
         <button class="btn" type="submit" value="launch">🚀 שגרו את הקמפיין</button>
@@ -568,7 +568,7 @@ function renderPosts() {
       <div class="acts">
         ${p.status !== 'פורסם' ? `<button data-act="edit-post" data-id="${p.id}">✎ עריכה</button>` : ''}
         <button data-act="copy" data-id="${p.id}">העתקה</button>
-        ${p.status !== 'פורסם' ? `<button data-act="attach-image" data-id="${p.id}">📷 ${p.image ? 'החלפת תמונה' : 'הוספת תמונה'}</button>` : ''}
+        ${p.status !== 'פורסם' ? `<button data-act="attach-image" data-id="${p.id}">📷 ${p.image ? 'החלפת תמונה' : 'הוספת תמונה'}</button><button data-act="studio-post" data-id="${p.id}">🎨 באנר</button>` : ''}
         ${p.risk?.level && caps.ai && p.status !== 'פורסם' ? `<button data-act="fix-ai" data-id="${p.id}">✨ תקנו את הניסוח עם AI</button>` : ''}
         ${p.status === 'ממתין לבדיקה' ? `<button data-act="override" data-id="${p.id}">אשרו בכל זאת</button>` : ''}
         ${p.status === 'טיוטה' ? `<button data-act="approve" data-id="${p.id}">אישור לפרסום</button>` : ''}${p.status !== 'פורסם' ? `<button data-act="published" data-id="${p.id}">סימון כפורסם</button>` : ''}

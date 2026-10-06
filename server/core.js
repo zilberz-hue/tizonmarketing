@@ -87,6 +87,7 @@ const tgApi = m => `${env('TELEGRAM_API_URL') || 'https://api.telegram.org'}/bot
 // Lead notifications contain personal data, so they must never go to a public channel/group:
 // use the private notification chat, or TG_CHAT_ID only when it is a private user chat (positive number).
 const notifyChat = () => env('TG_NOTIFY_CHAT_ID') || (/^\d+$/.test(env('TG_CHAT_ID')) ? env('TG_CHAT_ID') : '');
+const openaiBase = () => (env('OPENAI_BASE_URL') || 'https://api.openai.com/v1').replace(/\/$/, '');
 const fbApi = () => env('FACEBOOK_API_URL') || 'https://graph.facebook.com/v19.0';
 let lastOrigin = '';
 const siteBase = () => (env('SITE_URL') || process.env.URL || lastOrigin).replace(/\/$/, '');
@@ -99,7 +100,8 @@ const connectors = () => ({
   telegram: !!(env('TG_BOT_TOKEN') && env('TG_CHAT_ID')),
   tgNotify: !!(env('TG_BOT_TOKEN') && notifyChat()),
   webhook: !!env('PUBLISH_WEBHOOK_URL'),
-  email: !!(env('RESEND_API_KEY') && env('EMAIL_FROM'))
+  email: !!(env('RESEND_API_KEY') && env('EMAIL_FROM')),
+  image: !!env('OPENAI_API_KEY')
 });
 
 async function getJson(url) {
@@ -136,6 +138,11 @@ async function onNewLead(lead) {
 async function testService(name) {
   const c = connectors();
   if (name === 'ai') return `המודל ענה: ${await claude('כתוב את המילה "שלום" בלבד.', 20)}`;
+  if (name === 'image') {
+    if (!c.image) throw new Error('חסר מפתח OpenAI');
+    await (await ext(`${openaiBase()}/models`, { headers: { authorization: 'Bearer ' + env('OPENAI_API_KEY') } })).json().catch(() => ({}));
+    return `המפתח תקין. מודל התמונות: ${env('IMAGE_MODEL') || 'gpt-image-1'}`;
+  }
   if (name === 'facebook') {
     if (!c.facebook) throw new Error('חסר Page ID או טוקן');
     const r = await getJson(`https://graph.facebook.com/v19.0/${encodeURIComponent(env('FB_PAGE_ID'))}?fields=name&access_token=${encodeURIComponent(env('FB_PAGE_TOKEN'))}`);
@@ -458,6 +465,47 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
       if (!improved) throw httpErr(502, 'ה-AI לא החזיר טקסט, נסו שוב');
       return { text: improved, risk: checkText(improved) };
     },
+    // Three short Hebrew banner texts (headline / subline / button) for the banner designer.
+    async 'banner-copy'(S, b) {
+      const text = String(b.text || '').trim().slice(0, 1500), instruction = String(b.instruction || '').trim().slice(0, 200);
+      if (!text && !instruction) throw httpErr(400, 'כתבו טקסט או הנחיה כדי שאציע כותרות');
+      const raw = await claude(`אתה קופירייטר שיווקי בעברית. הצע 3 וריאציות של כותרות לבאנר גרפי, לפי הטקסט.
+${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0, 400) + '\n' : ''}טקסט: ${text || '(אין)'}
+${instruction ? 'הנחיה: ' + instruction + '\n' : ''}כל וריאציה: "headline" עד 6 מילים, "sub" עד 12 מילים (אפשר ריק), "cta" עד 3 מילים. בלי הבטחות רפואיות, בלי טענות ריפוי, בלי להמציא עובדות או מספרים.
+החזר JSON תקין בלבד: מערך של 3 אובייקטים {"headline":"","sub":"","cta":""}.`, 700);
+      let arr; try { arr = JSON.parse(raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1)); } catch { throw httpErr(502, 'ה-AI החזיר תשובה לא תקינה, נסו שוב'); }
+      const options = arr.slice(0, 3).map(o => ({ headline: String(o.headline || '').slice(0, 80), sub: String(o.sub || '').slice(0, 140), cta: String(o.cta || '').slice(0, 40) }))
+        .filter(o => o.headline).map(o => ({ ...o, risk: checkText(`${o.headline} ${o.sub} ${o.cta}`) }));
+      if (!options.length) throw httpErr(502, 'ה-AI לא החזיר כותרות, נסו שוב');
+      return { options };
+    },
+    // A short English description for the image model, written from the post text.
+    async 'image-prompt'(S, b) {
+      const text = String(b.text || '').trim().slice(0, 1500);
+      if (!text) throw httpErr(400, 'כתבו קודם את טקסט הפוסט');
+      const out = await claude(`Write ONE short English prompt (max 45 words) for an image generation model that creates a background image for this Hebrew marketing post. Calm, clean, professional style suitable for a health and wellness brand. The image must contain NO text, NO letters, NO logos, NO close-up faces, and must not imply medical results. Return only the prompt.
+${env('BUSINESS_PROFILE') ? 'Business: ' + env('BUSINESS_PROFILE').slice(0, 300) + '\n' : ''}Post: ${text}`, 200);
+      return { prompt: out.replace(/^["']+|["']+$/g, '').trim() };
+    },
+    // Generate an image with OpenAI and store it in the media library (JPEG keeps it under the 700KB document limit).
+    async image(S, b, who) {
+      const prompt = String(b.prompt || '').trim().slice(0, 600);
+      if (prompt.length < 3) throw httpErr(400, 'תארו במשפט מה לצייר');
+      if (!env('OPENAI_API_KEY')) throw httpErr(400, 'ליצירת תמונות חברו מפתח OpenAI בהגדרות ← יצירת תמונות');
+      const size = ['1024x1024', '1024x1536', '1536x1024'].includes(b.size) ? b.size : '1024x1024';
+      const r = await (await ext(`${openaiBase()}/images/generations`, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + env('OPENAI_API_KEY') },
+        body: JSON.stringify({ model: env('IMAGE_MODEL') || 'gpt-image-1', prompt: `${prompt}\nClean, professional marketing image. No text, no letters, no logos, no watermarks.`, size, n: 1, quality: 'medium', output_format: 'jpeg', output_compression: 65 })
+      }, 120000)).json().catch(() => ({}));
+      const b64 = r.data?.[0]?.b64_json;
+      if (!b64) throw httpErr(502, 'לא התקבלה תמונה מהשירות');
+      const buf = Buffer.from(b64, 'base64');
+      if (!(buf[0] === 0xff && buf[1] === 0xd8)) throw httpErr(502, 'התמונה שהתקבלה אינה בפורמט צפוי');
+      if (buf.length > 700e3) throw httpErr(502, 'התמונה שנוצרה גדולה מדי. נסו תיאור פשוט יותר');
+      const id = crypto.randomBytes(12).toString('hex');
+      await base.put('media', id, { ws: who.ws, type: 'image/jpeg', data: b64, created: new Date().toISOString() });
+      return { id, url: `/api/media/${id}` };
+    },
     async fix(S, b) {
       const text = String(b.text || '').slice(0, 4000);
       const fixed = await claude(fixPrompt(text, checkText(text).findings, env('BUSINESS_PROFILE')), 800);
@@ -471,7 +519,7 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
   };
 
   async function runAi(S, user, ws, kind, params) {
-    if (!opts.startJob || !env('ANTHROPIC_API_KEY')) return aiTasks[kind](S, params);
+    if (!opts.startJob || !(env('ANTHROPIC_API_KEY') || env('OPENAI_API_KEY'))) return aiTasks[kind](S, params, { ws, user: user.email });
     const id = crypto.randomBytes(12).toString('hex');
     const rec = { ws, kind, params, user: user.email, status: 'pending', created: new Date().toISOString() };
     await base.put('jobs', id, rec);
@@ -487,7 +535,7 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
     await base.put('jobs', id, { ...j, status: 'running' });
     const S = scoped(j.ws);
     await runWith({ ws: j.ws, overrides: await loadSettings(S, j.ws) }, async () => {
-      try { await base.put('jobs', id, { ...j, status: 'done', result: await aiTasks[j.kind](S, j.params), finished: new Date().toISOString() }); }
+      try { await base.put('jobs', id, { ...j, status: 'done', result: await aiTasks[j.kind](S, j.params, { ws: j.ws, user: j.user }), finished: new Date().toISOString() }); }
       catch (e) { await base.put('jobs', id, { ...j, status: 'error', error: String(e.message).slice(0, 300), finished: new Date().toISOString() }); }
     });
   }
@@ -659,7 +707,7 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
       if (method === 'POST' && parts[1] === 'test') {
         if (limited('test:' + user.email, 20, 3600e3)) throw httpErr(429, 'יותר מדי בדיקות, נסו שוב מאוחר יותר');
         const { service } = await readBody(req);
-        if (!['ai', 'facebook', 'telegram', 'webhook', 'email'].includes(service)) throw httpErr(400, 'שירות לא מוכר');
+        if (!['ai', 'image', 'facebook', 'telegram', 'webhook', 'email'].includes(service)) throw httpErr(400, 'שירות לא מוכר');
         try { return send(res, 200, { ok: true, detail: await testService(service) }); }
         catch (e) { return send(res, 200, { ok: false, detail: String(e.message).slice(0, 300) }); }
       }
@@ -684,7 +732,12 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
       if (parts[1] === 'quick-campaign' && String(b.idea || '').trim().length < 3) throw httpErr(400, 'ספרו במשפט אחד מה רוצים לקדם');
       if (parts[1] === 'plan' && !(await store.get('campaigns', String(b.campaign || '')))) throw httpErr(404, 'קמפיין לא נמצא');
       if (parts[1] === 'improve' && !env('ANTHROPIC_API_KEY')) throw httpErr(400, 'לשדרוג עם AI חברו מפתח בהגדרות ← בינה מלאכותית');
-      if (['generate', 'quick-campaign', 'plan', 'improve'].includes(parts[1])) return send(res, 200, await runAi(store, user, ws, parts[1], b));
+      if (['banner-copy', 'image-prompt'].includes(parts[1]) && !env('ANTHROPIC_API_KEY')) throw httpErr(400, 'חברו מפתח AI בהגדרות ← בינה מלאכותית');
+      if (parts[1] === 'image') {
+        if (!env('OPENAI_API_KEY')) throw httpErr(400, 'ליצירת תמונות חברו מפתח OpenAI בהגדרות ← יצירת תמונות');
+        if (limited('img:' + user.email, 12, 3600e3)) throw httpErr(429, 'חריגה ממכסת יצירת תמונות לשעה');
+      }
+      if (['generate', 'quick-campaign', 'plan', 'improve', 'banner-copy', 'image-prompt', 'image'].includes(parts[1])) return send(res, 200, await runAi(store, user, ws, parts[1], b));
     }
 
     if (parts[0] === 'campaigns' && parts[1] === 'order' && method === 'POST') {
