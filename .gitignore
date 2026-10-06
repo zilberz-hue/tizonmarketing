@@ -7,3 +7,4 @@ dist/
 functions/config.js
 functions/insights.js
 functions/compliance.js
+functions/guide-content.js

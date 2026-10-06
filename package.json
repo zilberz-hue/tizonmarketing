@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node server/server.js",
-    "test": "node server/test.js && node server/netlify.test.js"
+    "test": "node server/test.js && node server/netlify.test.js",
+    "manual": "node scripts/build-manual.js"
   },
   "dependencies": {
     "@netlify/blobs": "^8.1.0"

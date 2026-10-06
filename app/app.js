@@ -66,7 +66,7 @@ function startProgress({ label, est = 10000 }) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const AI_LABELS = {
   '/ai/quick-campaign': ['בונה את הקמפיין', 25000], '/ai/plan': ['מתכנן לוח תוכן', 25000], '/ai/improve': ['משדרג את הטקסט', 9000], '/ai/generate': ['כותב פוסט', 9000],
-  '/ai/banner-copy': ['מנסח כותרות לבאנר', 9000], '/ai/image-prompt': ['כותב תיאור לתמונה', 6000], '/ai/image': ['יוצר תמונה', 30000], '/compliance/fix': ['מתקן את הניסוח', 9000], '/insights': ['מנתח את הנתונים', 12000]
+  '/ai/banner-copy': ['מנסח כותרות לבאנר', 9000], '/ai/image-prompt': ['כותב תיאור לתמונה', 6000], '/ai/image': ['יוצר תמונה', 30000], '/compliance/fix': ['מתקן את הניסוח', 9000], '/insights': ['מנתח את הנתונים', 12000], '/guide/ask': ['המדריך מכין תשובה', 9000], '/guide/learn': ['מעדכן את ספר הידע', 15000]
 };
 async function aiCall(path, body) {
   const [label, est] = AI_LABELS[path] || ['מעבד', 10000];
@@ -543,6 +543,7 @@ function render() {
   if (!window.__dragging) renderCampaigns();
   renderPosts(); renderLeads(); renderReports(); renderDash();
   if (typeof renderPlan === 'function') renderPlan();
+  if (typeof loadAcademyBasics === 'function') loadAcademyBasics().catch(() => {}); else if (typeof renderAcademy === 'function') renderAcademy();
   if (typeof renderExtras === 'function') renderExtras();
 }
 
@@ -673,6 +674,7 @@ function renderDash() {
   const held = db.posts.filter(p => p.status === 'ממתין לבדיקה');
   $('#dash').innerHTML = `<div class="bar"><h2>סקירה</h2><button class="btn" data-act="quick-open">✨ קמפיין בדקה</button></div>
     ${typeof planNextHtml === 'function' ? planNextHtml() : ''}
+    ${typeof academyNextHtml === 'function' ? academyNextHtml() : ''}
     <div class="kpis">
       <div class="kpi"><b>${db.campaigns.filter(c => c.status === 'פעיל').length}</b>קמפיינים פעילים</div>
       <div class="kpi"><b>${t.leads}</b>לידים</div>

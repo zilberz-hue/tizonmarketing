@@ -156,3 +156,21 @@ input[dir=ltr],textarea[dir=ltr]{text-align:left}
 .pfoot{display:flex;justify-content:space-between;font-size:.82rem;color:var(--muted)}
 .ptask.pdone .pfill{background:var(--brand2)}.ptask.pdone .ppct{color:var(--brand2)}
 .ptask.pfail{border-color:#d33}.ptask.pfail .pfill{background:#d33}.ptask.pfail .pstage{color:#d33}
+
+/* training center */
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#d33;margin-inline-start:4px;vertical-align:middle}
+.ac-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.ac-list li{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:8px 0;border-top:1px solid #8882}.ac-list li:first-child{border-top:0}
+.ac-list li.done b{color:var(--brand2)}
+.ac-askrow{display:flex;gap:8px}.ac-askrow input{flex:1}
+.ac-answer{background:var(--bg);border:1px solid #8883;border-radius:12px;padding:12px;margin:10px 0;line-height:1.7}
+.ac-md h3,.ac-md h4,.ac-md h5{margin:12px 0 4px}.ac-md p{margin:4px 0}.ac-md ul{margin:4px 0;padding-inline-start:20px}
+.quiz-q{border:1px solid #8883;border-radius:10px;padding:8px 12px;margin:8px 0;display:grid;gap:6px}.quiz-q legend{font-weight:700;padding:0 6px}
+.quiz-why{font-size:.9rem}.quiz-why .ok{color:var(--brand2);font-weight:700}.quiz-why .err{color:#d33;font-weight:700}
+/* interactive tour */
+.tour-spot{position:fixed;z-index:200;border-radius:12px;pointer-events:none;box-shadow:0 0 0 9999px #0008,0 0 0 3px var(--brand2);transition:all .25s ease;display:none}
+.tour-tip{position:fixed;z-index:210;background:var(--bg);color:var(--fg);border:2px solid var(--brand);border-radius:14px;padding:12px 14px;box-shadow:0 14px 40px #0006;display:grid;gap:6px;max-width:92vw}
+.tour-tip h4{margin:2px 0}.tour-tip p{margin:0;line-height:1.55}
+.tour-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.tour-hint{color:var(--brand);font-weight:700}
+.tour-nav{display:flex;justify-content:space-between;align-items:center;margin-top:4px}
