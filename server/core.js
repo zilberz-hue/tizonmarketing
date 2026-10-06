@@ -74,9 +74,14 @@ async function postJson(url, body, headers = {}) {
   if (!r.ok) throw new Error(`${new URL(url).hostname} ${r.status}: ${(await r.text()).slice(0, 200)}`);
   return r.json().catch(() => ({}));
 }
+const tgApi = m => `${env('TELEGRAM_API_URL') || 'https://api.telegram.org'}/bot${env('TG_BOT_TOKEN')}/${m}`;
+// Lead notifications contain personal data, so they must never go to a public channel/group:
+// use the private notification chat, or TG_CHAT_ID only when it is a private user chat (positive number).
+const notifyChat = () => env('TG_NOTIFY_CHAT_ID') || (/^\d+$/.test(env('TG_CHAT_ID')) ? env('TG_CHAT_ID') : '');
 const connectors = () => ({
   facebook: !!(env('FB_PAGE_ID') && env('FB_PAGE_TOKEN')),
   telegram: !!(env('TG_BOT_TOKEN') && env('TG_CHAT_ID')),
+  tgNotify: !!(env('TG_BOT_TOKEN') && notifyChat()),
   webhook: !!env('PUBLISH_WEBHOOK_URL'),
   email: !!(env('RESEND_API_KEY') && env('EMAIL_FROM'))
 });
@@ -119,9 +124,11 @@ async function testService(name) {
     return `מחובר לדף: ${r.name}`;
   }
   if (name === 'telegram') {
-    if (!c.telegram) throw new Error('חסר טוקן או Chat ID');
-    await postJson(`https://api.telegram.org/bot${env('TG_BOT_TOKEN')}/sendMessage`, { chat_id: env('TG_CHAT_ID'), text: '✅ החיבור לטלגרם תקין' });
-    return 'נשלחה הודעת בדיקה לטלגרם';
+    if (!env('TG_BOT_TOKEN') || !(env('TG_CHAT_ID') || env('TG_NOTIFY_CHAT_ID'))) throw new Error('חסר טוקן או מזהה שיחה');
+    const sent = [];
+    if (env('TG_CHAT_ID')) { await postJson(tgApi('sendMessage'), { chat_id: env('TG_CHAT_ID'), text: '✅ החיבור לפרסום בטלגרם תקין' }); sent.push('ערוץ הפרסום'); }
+    if (c.tgNotify && notifyChat() !== env('TG_CHAT_ID')) { await postJson(tgApi('sendMessage'), { chat_id: notifyChat(), text: '✅ החיבור להתראות פרטיות תקין' }); sent.push('צ׳אט ההתראות'); }
+    return `נשלחה הודעת בדיקה אל: ${sent.join(' ו')}`;
   }
   if (name === 'webhook') {
     if (!c.webhook) throw new Error('חסרה כתובת Webhook');
@@ -142,7 +149,7 @@ async function publish(post, campaign) {
     return 'facebook';
   }
   if (ch === 'Telegram' && c.telegram) {
-    await postJson(`https://api.telegram.org/bot${env('TG_BOT_TOKEN')}/sendMessage`, { chat_id: env('TG_CHAT_ID'), text: post.text });
+    await postJson(tgApi('sendMessage'), { chat_id: env('TG_CHAT_ID'), text: post.text });
     return 'telegram';
   }
   if (c.webhook) {
@@ -153,7 +160,7 @@ async function publish(post, campaign) {
 }
 async function notify(text, event = 'notify', data = {}) {
   const c = connectors();
-  try { if (c.telegram) await postJson(`https://api.telegram.org/bot${env('TG_BOT_TOKEN')}/sendMessage`, { chat_id: env('TG_CHAT_ID'), text }); } catch (e) { console.error('notify telegram:', e.message); }
+  try { if (c.tgNotify) await postJson(tgApi('sendMessage'), { chat_id: notifyChat(), text }); } catch (e) { console.error('notify telegram:', e.message); }
   try { if (c.webhook) await postJson(env('PUBLISH_WEBHOOK_URL'), { event, text, ...data }); } catch (e) { console.error('notify webhook:', e.message); }
 }
 
@@ -234,7 +241,7 @@ export function createApp(store) {
 
   async function digest(now) {
     const c = connectors();
-    if (env('WEEKLY_DIGEST') === 'off' || !(c.telegram || c.webhook || (c.email && env('OWNER_EMAIL')))) return;
+    if (env('WEEKLY_DIGEST') === 'off' || !(c.tgNotify || c.webhook || (c.email && env('OWNER_EMAIL')))) return;
     const last = Date.parse((await getMeta(store)).lastDigest || 0) || 0;
     if (now - last < 7 * 864e5) return;
     const st = await computeStats(store, now);
@@ -258,7 +265,7 @@ export function createApp(store) {
       if (p.status !== 'מתוזמן' || !p.at || Date.parse(p.at) > now) continue;
       if (!await store.claim('posts', p.id, 'מתוזמן', 'מפרסם')) continue;
       try {
-        const via = await publish(p, await store.get('campaigns', p.campaign));
+        const via = await publish(p, await store.get('campaigns', p.campaign || ''));
         await store.put('posts', p.id, via
           ? { ...p, status: 'פורסם', via, publishedAt: new Date().toISOString(), error: '' }
           : { ...p, status: 'ידני', error: 'אין חיבור לערוץ – יש לפרסם ידנית' });

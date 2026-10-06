@@ -21,11 +21,12 @@ export const GROUPS = [
       { key: 'FB_PAGE_ID', label: 'מזהה הדף (Page ID)' },
       { key: 'FB_PAGE_TOKEN', label: 'טוקן הדף', secret: true }
     ] },
-  { id: 'telegram', title: '✈️ טלגרם', desc: 'פרסום לערוץ או לקבוצה, והתראות אליכם על לידים.', test: 'telegram', required: ['TG_BOT_TOKEN', 'TG_CHAT_ID'],
-    help: 'ב-BotFather יוצרים בוט (/newbot) ומעתיקים את הטוקן. מוסיפים את הבוט לקבוצה או לערוץ, ושולחים הודעה אחת.',
+  { id: 'telegram', title: '✈️ טלגרם', desc: 'פרסום לערוץ או לקבוצה, והתראות פרטיות אליכם על לידים.', test: 'telegram', required: ['TG_BOT_TOKEN'], needAny: ['TG_CHAT_ID', 'TG_NOTIFY_CHAT_ID'],
+    help: 'ב-BotFather יוצרים בוט (/newbot) ומעתיקים את הטוקן. לפרסום: מוסיפים את הבוט כמנהל בערוץ, ומזינים @שם_הערוץ (ערוץ ציבורי) או מספר שיחה. להתראות: שולחים לבוט הודעה בצ׳אט פרטי, ומזינים את מספר הצ׳אט שלכם. פרטיות: התראות על לידים כוללות שמות וטלפונים, ולכן אף פעם לא נשלחות לערוץ הפרסום.',
     fields: [
       { key: 'TG_BOT_TOKEN', label: 'טוקן הבוט', secret: true },
-      { key: 'TG_CHAT_ID', label: 'מזהה שיחה (Chat ID)', placeholder: '-100123456789' }
+      { key: 'TG_CHAT_ID', label: 'ערוץ/קבוצה לפרסום (@שם_הערוץ או מספר)', placeholder: '@my_channel' },
+      { key: 'TG_NOTIFY_CHAT_ID', label: 'צ׳אט פרטי להתראות על לידים (מספר)', placeholder: '123456789' }
     ] },
   { id: 'webhook', title: '🔗 Webhook (Make / Zapier)', desc: 'אינסטגרם, לינקדאין, טיקטוק, וואטסאפ ועוד, דרך אוטומציה חיצונית.', test: 'webhook', required: ['PUBLISH_WEBHOOK_URL'],
     help: 'ב-Make או ב-Zapier יוצרים תרחיש עם Webhook, ומדביקים את הכתובת שלו.',
@@ -114,7 +115,7 @@ export async function setMeta(store, patch) {
 export function describeSettings() {
   return GROUPS.map(g => ({
     id: g.id, title: g.title, desc: g.desc, help: g.help, test: g.test,
-    connected: g.required.length > 0 && g.required.every(k => !!env(k)),
+    connected: g.required.length > 0 && g.required.every(k => !!env(k)) && (!g.needAny || g.needAny.some(k => !!env(k))),
     fields: g.fields.map(f => {
       const v = env(f.key), secret = !!f.secret;
       return {

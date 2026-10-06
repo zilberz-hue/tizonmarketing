@@ -31,6 +31,7 @@ await new Promise(r => mock2.listen(0, r));
 const m2 = `http://127.0.0.1:${mock2.address().port}`;
 process.env.ANTHROPIC_API_URL = m2 + '/anthropic';
 process.env.RESEND_API_URL = m2 + '/emails';
+process.env.TELEGRAM_API_URL = m2 + '/tg';
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tizon-'));
 process.env.ADMIN_EMAIL = 'a@b.co';
@@ -151,6 +152,31 @@ assert.equal(leadsNow.find(l => l.name === 'זר').campaign, '');
   await call('PUT', '/api/settings', { clear: ['RESEND_API_KEY'] });
   assert.equal((await call('GET', '/api/settings')).data.groups.find(g => g.id === 'email').connected, false);
   void pp;
+}
+
+// Telegram privacy: lead notifications (personal data) never go to the public publishing channel
+{
+  process.env.TRUST_PROXY = 'true';
+  const lead = ip => fetch(base + '/api/public/lead', { method: 'POST', headers: { 'content-type': 'application/json', 'x-nf-client-connection-ip': ip }, body: JSON.stringify({ name: 'פרטי', phone: '050' }) });
+  const sends = () => mock2log.filter(r => r.path.includes('/sendMessage'));
+  await call('PUT', '/api/settings', { values: { TG_BOT_TOKEN: '111:AAA', TG_CHAT_ID: '@my_channel' } });
+  mock2log.length = 0; await lead('7.7.7.1');
+  assert.equal(sends().length, 0, 'public channel never receives lead details');
+  await call('PUT', '/api/settings', { values: { TG_NOTIFY_CHAT_ID: '123456789' } });
+  mock2log.length = 0; await lead('7.7.7.2');
+  assert.deepEqual(sends().map(r => r.body.chat_id), ['123456789']);
+  await call('POST', '/api/posts', { channel: 'Telegram', text: 'לערוץ', at: new Date(Date.now() - 1000).toISOString() });
+  mock2log.length = 0; await tick();
+  assert.ok(sends().some(r => r.body.chat_id === '@my_channel' && r.body.text === 'לערוץ'), 'posts still go to the channel');
+  const tt = (await call('POST', '/api/settings/test', { service: 'telegram' })).data;
+  assert.equal(tt.ok, true); assert.match(tt.detail, /ערוץ הפרסום/);
+  await call('PUT', '/api/settings', { values: { TG_CHAT_ID: '555' }, clear: ['TG_NOTIFY_CHAT_ID'] });
+  mock2log.length = 0; await lead('7.7.7.3');
+  assert.deepEqual(sends().map(r => r.body.chat_id), ['555'], 'a private chat id doubles as the notification chat');
+  await call('PUT', '/api/settings', { values: { TG_CHAT_ID: '-1001234' } });
+  mock2log.length = 0; await lead('7.7.7.4');
+  assert.equal(sends().length, 0, 'a group/channel id is never used for notifications');
+  await call('PUT', '/api/settings', { clear: ['TG_BOT_TOKEN', 'TG_CHAT_ID'] });
 }
 
 // work-plan checklist: shared, validated, returned in /state

@@ -20,7 +20,7 @@ export function sqliteStore(file) {
     async getSession(token) { return db.prepare('SELECT email, exp FROM sessions WHERE token=?').get(token) || null; },
     async delSession(token) { db.prepare('DELETE FROM sessions WHERE token=?').run(token); },
     async list(kind) { return db.prepare('SELECT id, data FROM items WHERE kind=?').all(kind).map(r => ({ id: r.id, ...JSON.parse(r.data) })); },
-    get: async (kind, id) => getItem(kind, id),
+    get: async (kind, id) => (id ? getItem(kind, id) : null),
     async put(kind, id, obj) { const { id: _, ...d } = obj; db.prepare('INSERT OR REPLACE INTO items(kind,id,data) VALUES(?,?,?)').run(kind, id, JSON.stringify(d)); return { id, ...d }; },
     async del(kind, id) { db.prepare('DELETE FROM items WHERE kind=? AND id=?').run(kind, id); },
     async claim(kind, id, from, to) {
