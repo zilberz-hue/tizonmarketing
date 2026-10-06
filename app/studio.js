@@ -169,11 +169,15 @@ function openStudio({ text = '', onDone } = {}) {
   // finish: upload (attach) or download
   $$('st-download').onclick = async () => { const b = await canvasToJpeg(cv), a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'banner.jpg'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };
   $$('st-use').onclick = async () => {
-    const st = $$('st-status'), btn = $$('st-use'); btn.disabled = true; st.textContent = 'שומר…';
+    const st = $$('st-status'), btn = $$('st-use'); btn.disabled = true; st.textContent = '';
+    const pr = startProgress({ label: 'יוצר את הבאנר' });
     try {
-      const id = (await api('POST', '/media', { dataUrl: await blobToDataUrl(await canvasToJpeg(cv)) })).id;
-      dlg.close(); studio.onDone?.(id); toast('התמונה נוספה ✅');
-    } catch (e) { st.textContent = '❌ ' + e.message; } finally { btn.disabled = false; }
+      pr.stage('מצייר את הבאנר…'); pr.set(15); drawBanner(cv, studio);
+      pr.stage('מכווץ לגודל מתאים…'); pr.set(40); const blob = await canvasToJpeg(cv);
+      pr.stage(`מעלה (${Math.round(blob.size / 1024)}KB)…`); pr.set(65);
+      const id = (await api('POST', '/media', { dataUrl: await blobToDataUrl(blob) })).id;
+      pr.set(95); dlg.close(); studio.onDone?.(id); pr.done('הבאנר מוכן ✓'); toast('התמונה נוספה ✅');
+    } catch (e) { pr.fail(e.message); st.textContent = '❌ ' + e.message; } finally { btn.disabled = false; }
   };
 }
 
