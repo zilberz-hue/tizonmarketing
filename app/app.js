@@ -158,6 +158,9 @@ document.addEventListener('click', safe(async e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const { act, id } = b.dataset;
   if (act === 'quick-open') return openQuick();
+  if (act === 'edit-campaign') return editCampaignDialog(id);
+  if (act === 'edit-lead') return editLeadDialog(id);
+  if (act === 'edit-post') return typeof editPostDialog === 'function' ? editPostDialog(id) : undefined;
   if (act === 'sync') { b.disabled = true; try { const r = await api('POST', '/sync', {}); await refresh(); toast(`עודכנו ${r.posts} פוסטים ו-${r.campaigns} קמפיינים`); } finally { b.disabled = false; } return; }
   if (act === 'attach-image') { const img = await pickImage(); if (!img) return; await api('PUT', '/posts/' + id, { image: img }); await refresh(); toast('התמונה נוספה'); return; }
   if (act === 'override') { if (!confirm('לאשר פרסום למרות הניסוח שסומן? האחריות על התוכן עליכם.')) return; await api('PUT', '/posts/' + id, { override: 1, status: 'מתוזמן', error: '' }); await refresh(); toast('הפוסט אושר ויפורסם בקרוב'); return; }
@@ -178,7 +181,13 @@ document.addEventListener('click', safe(async e => {
   if (act === 'copy') { navigator.clipboard?.writeText(db.posts.find(p => p.id === id).text); b.textContent = 'הועתק ✓'; return; }
   if (act === 'del-campaign' && confirm('למחוק את הקמפיין?')) await api('DELETE', '/campaigns/' + id);
   else if (act === 'spend') { const c = camp(id), v = prompt('כמה הוצאתם עד כה (₪)?', c.spent); if (v === null || isNaN(+v)) return; await api('PUT', '/campaigns/' + id, { spent: +v }); }
-  else if (act === 'toggle-campaign') await api('PUT', '/campaigns/' + id, { status: camp(id).status === 'פעיל' ? 'הסתיים' : 'פעיל' });
+  else if (act === 'set-status') await api('PUT', '/campaigns/' + id, { status: b.dataset.status });
+  else if (act === 'camp-move') {
+    const ids = sortedCamps().map(c => c.id), from = ids.indexOf(id), to = from + +b.dataset.dir;
+    if (to < 0 || to >= ids.length) return;
+    [ids[from], ids[to]] = [ids[to], ids[from]];
+    await saveCampOrder(ids.map(x => ({ id: x })));
+  }
   else if (act === 'ai-plan') {
     const d = prompt('לכמה ימים לתכנן תוכן?', '7'); if (d === null) return;
     b.disabled = true; b.textContent = 'מייצר...';
@@ -205,6 +214,71 @@ document.addEventListener('change', safe(async e => {
   if (!e.target.classList?.contains('nextdate')) return;
   await api('PUT', '/leads/' + e.target.dataset.id, { next: e.target.value });
   await refresh();
+}));
+
+// Persist a new campaign order (and, on the board, each card's column/status) with a single call.
+async function saveCampOrder(items) {
+  await api('POST', '/campaigns/order', { items });
+  await refresh();
+}
+
+// ---------- Edit dialogs: campaign and lead ----------
+const GOALS_UI = ['לידים', 'מכירות', 'מודעות למותג', 'תנועה לאתר', 'שימור לקוחות'];
+function editDialog(html) {
+  let dlg = $('#editdlg');
+  if (!dlg) { dlg = document.createElement('dialog'); dlg.id = 'editdlg'; dlg.className = 'quick'; document.body.appendChild(dlg); }
+  dlg.innerHTML = `<form method="dialog" class="x"><button aria-label="סגירה">✕</button></form>${html}`;
+  dlg.showModal();
+  return dlg;
+}
+const opts = (list, cur) => list.map(v => `<option ${v === cur ? 'selected' : ''}>${esc(v)}</option>`).join('');
+
+function editCampaignDialog(id) {
+  const c = camp(id); if (!c) return;
+  editDialog(`<h2>עריכת קמפיין</h2><p class="sub">${esc(c.name)}</p>
+    <form id="editcamp-form" class="panel" data-id="${esc(id)}">
+      <label>שם הקמפיין <input name="name" value="${esc(c.name)}" required></label>
+      <div class="row"><label>יעד <select name="goal">${opts(GOALS_UI, c.goal)}</select></label>
+        <label>סטטוס <select name="status">${opts(['פעיל', 'מושהה', 'הסתיים'], c.status)}</select></label></div>
+      <label>קהל יעד <textarea name="audience" rows="2">${esc(c.audience || '')}</textarea></label>
+      <fieldset class="chips"><legend>ערוצים</legend>${ALL_CHANNELS.map(ch => `<label class="chip"><input type="checkbox" name="ch" value="${ch}" ${(c.channels || []).includes(ch) ? 'checked' : ''}><span>${ch}</span></label>`).join('')}</fieldset>
+      <div class="row"><label>תקציב (₪) <input name="budget" type="number" min="0" value="${+c.budget || 0}"></label>
+        <label>הוצאה עד כה (₪) <input name="spent" type="number" min="0" step="any" value="${+c.spent || 0}"></label>
+        <label>יעד לידים <input name="target" type="number" min="0" value="${+c.target || 0}"></label></div>
+      <div class="row"><label>התחלה <input name="start" type="date" value="${esc(c.start || '')}"></label><label>סיום <input name="end" type="date" value="${esc(c.end || '')}"></label></div>
+      <label>מסר מרכזי והצעה <textarea name="message" rows="2">${esc(c.message || '')}</textarea></label>
+      <div class="qfoot"><button class="btn" type="submit">שמירה</button><button type="button" class="link" data-close>ביטול</button></div>
+    </form>`);
+}
+
+function editLeadDialog(id) {
+  const l = db.leads.find(x => x.id === id); if (!l) return;
+  editDialog(`<h2>עריכת ליד</h2><p class="sub">${esc(l.name)}</p>
+    <form id="editlead-form" class="panel" data-id="${esc(id)}">
+      <div class="row"><label>שם <input name="name" value="${esc(l.name)}" required></label><label>טלפון <input name="phone" type="tel" value="${esc(l.phone || '')}" dir="ltr"></label><label>אימייל <input name="email" type="email" value="${esc(l.email || '')}" dir="ltr"></label></div>
+      <div class="row"><label>שלב <select name="stage">${opts(STAGES, l.stage)}</select></label>
+        <label>קמפיין / מקור <select name="campaign"><option value="">ללא קמפיין</option>${db.campaigns.map(c => `<option value="${esc(c.id)}" ${c.id === l.campaign ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+        <label>שווי עסקה (₪) <input name="value" type="number" min="0" value="${+l.value || 0}"></label>
+        <label>תאריך מעקב <input name="next" type="date" value="${esc(l.next || '')}"></label></div>
+      <label>הערות <textarea name="note" rows="3">${esc(l.note || '')}</textarea></label>
+      <div class="qfoot"><button class="btn" type="submit">שמירה</button><button type="button" class="link" data-close>ביטול</button></div>
+    </form>`);
+}
+
+document.addEventListener('click', e => { const x = e.target.closest('[data-close]'); if (x) x.closest('dialog')?.close(); });
+document.addEventListener('submit', safe(async e => {
+  const f = e.target;
+  if (f.id === 'editcamp-form') {
+    e.preventDefault();
+    const d = new FormData(f);
+    await api('PUT', '/campaigns/' + f.dataset.id, { name: d.get('name'), goal: d.get('goal'), status: d.get('status'), audience: d.get('audience'), channels: d.getAll('ch'),
+      budget: +d.get('budget') || 0, spent: +d.get('spent') || 0, target: +d.get('target') || 0, start: d.get('start'), end: d.get('end'), message: d.get('message') });
+  } else if (f.id === 'editlead-form') {
+    e.preventDefault();
+    const d = new FormData(f);
+    await api('PUT', '/leads/' + f.dataset.id, { name: d.get('name'), phone: d.get('phone'), email: d.get('email'), stage: d.get('stage'), campaign: d.get('campaign'), value: +d.get('value') || 0, next: d.get('next'), note: d.get('note') });
+  } else return;
+  $('#editdlg').close(); await refresh(); toast('נשמר ✅');
 }));
 
 // ---------- Quick campaign ----------
@@ -407,7 +481,8 @@ function render() {
   $('#ai-text').hidden = !caps.ai;
   $('#tab-settings').hidden = me?.role !== 'admin';
   $('#insights-ai').hidden = !caps.ai;
-  renderCampaigns(); renderPosts(); renderLeads(); renderReports(); renderDash();
+  if (!window.__dragging) renderCampaigns();
+  renderPosts(); renderLeads(); renderReports(); renderDash();
   if (typeof renderPlan === 'function') renderPlan();
   if (typeof renderExtras === 'function') renderExtras();
 }
@@ -427,24 +502,51 @@ function stats(c) {
 }
 
 // rendering
+let campView = (() => { try { return localStorage.getItem('tz-campview') || 'list'; } catch { return 'list'; } })();
+const CAMP_COLS = [['פעיל', '🟢 פעיל'], ['מושהה', '⏸ מושהה'], ['הסתיים', '✅ הסתיים']];
+const sortedCamps = () => [...db.campaigns].sort((x, y) => (x.order ?? 1e15) - (y.order ?? 1e15));
+const statusBtns = c => c.status === 'פעיל'
+  ? `<button data-act="set-status" data-id="${c.id}" data-status="מושהה">⏸ השהיה</button><button data-act="set-status" data-id="${c.id}" data-status="הסתיים">סיום</button>`
+  : c.status === 'מושהה'
+    ? `<button data-act="set-status" data-id="${c.id}" data-status="פעיל">▶ המשך</button><button data-act="set-status" data-id="${c.id}" data-status="הסתיים">סיום</button>`
+    : `<button data-act="set-status" data-id="${c.id}" data-status="פעיל">הפעלה מחדש</button>`;
+
 function renderCampaigns() {
-  $('#campaign-list').innerHTML = db.campaigns.map(c => {
+  document.querySelectorAll('#camp-view button').forEach(b => b.classList.toggle('on', b.dataset.view === campView));
+  $('#campaign-list').hidden = campView === 'board'; $('#campaign-board').hidden = campView !== 'board';
+  const list = sortedCamps();
+  if (campView === 'board') {
+    $('#campaign-board').innerHTML = CAMP_COLS.map(([st, title]) => {
+      const cs = list.filter(c => c.status === st);
+      return `<section class="kcol" data-status="${st}" aria-label="${esc(title)}"><h3>${title} <span class="badge">${cs.length}</span></h3>${cs.map(c => {
+        const s = stats(c), pct = c.budget ? Math.min(100, c.spent / c.budget * 100) : 0;
+        return `<article class="kcard" data-id="${c.id}"><div class="khead"><span class="handle" role="button" tabindex="0" aria-label="גרירה: ${esc(c.name)}" title="גררו">⠿</span><b>${esc(c.name)}</b></div>
+          <div class="meta">${esc(c.goal)} · לידים ${s.leads}${c.target ? '/' + c.target : ''} · ${money(c.spent)}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+          <div class="acts"><button data-act="edit-campaign" data-id="${c.id}">✎ עריכה</button><button data-act="copy-link" data-id="${c.id}">🔗</button><button data-act="spend" data-id="${c.id}">הוצאה</button>${statusBtns(c)}</div></article>`; }).join('') || '<p class="meta empty-col">גררו לכאן</p>'}</section>`;
+    }).join('');
+    return;
+  }
+  $('#campaign-list').innerHTML = list.map((c, i) => {
     const s = stats(c), pct = c.budget ? Math.min(100, c.spent / c.budget * 100) : 0;
-    return `<article class="item">
-      <h3>${esc(c.name)} <span class="tag">${esc(c.status)}</span></h3>
+    return `<article class="item" data-id="${c.id}">
+      <div class="khead"><span class="handle" role="button" tabindex="0" aria-label="גרירה: ${esc(c.name)}" title="גררו כדי לשנות סדר">⠿</span>
+        <h3>${esc(c.name)} <span class="tag">${esc(c.status)}</span></h3>
+        <span class="movers"><button data-act="camp-move" data-id="${c.id}" data-dir="-1" aria-label="הזזה למעלה" ${i === 0 ? 'disabled' : ''}>▲</button><button data-act="camp-move" data-id="${c.id}" data-dir="1" aria-label="הזזה למטה" ${i === list.length - 1 ? 'disabled' : ''}>▼</button></span></div>
       <div class="meta">יעד: ${esc(c.goal)} · ${esc(c.start || '?')} – ${esc(c.end || '?')}</div>
-      <div>${c.channels.map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
+      <div>${(c.channels || []).map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
       ${c.audience ? `<div>קהל: ${esc(c.audience)}</div>` : ''}${c.message ? `<div>מסר: ${esc(c.message)}</div>` : ''}
       <div class="meta">תקציב ${money(c.budget)} · הוצאה ${money(c.spent)} · לידים ${s.leads}${c.target ? '/' + c.target : ''}${c.clicks ? ` · קליקים ${c.clicks} · חשיפות ${c.impressions}` : ''}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
       <div class="acts">
+        <button data-act="edit-campaign" data-id="${c.id}">✎ עריכה</button>
         <button data-act="ai-plan" data-id="${c.id}">✨ תכנון תוכן אוטומטי</button>
         <button data-act="copy-link" data-id="${c.id}">🔗 קישור מעקב</button>
         <button data-act="copy-link" data-id="${c.id}" data-v="A" title="בדיקת A/B: השתמשו בקישור A בפוסטים אחד, ובקישור B באחרים">🧪 A</button>
         <button data-act="copy-link" data-id="${c.id}" data-v="B">🧪 B</button>
         <button data-act="fb-campaign" data-id="${c.id}">${c.fbCampaign ? '🔌 מחובר לקידום' : '🔌 חיבור לקידום ממומן'}</button>
         <button data-act="spend" data-id="${c.id}">עדכון הוצאה</button>
-        <button data-act="toggle-campaign" data-id="${c.id}">${c.status === 'פעיל' ? 'סיום' : 'הפעלה מחדש'}</button>
+        ${statusBtns(c)}
         <button class="danger" data-act="del-campaign" data-id="${c.id}">מחיקה</button>
       </div></article>`;
   }).join('') || '<p class="meta">אין קמפיינים עדיין. לחצו "קמפיין חדש".</p>';
@@ -464,6 +566,7 @@ function renderPosts() {
       ${p.status !== 'פורסם' ? riskHtml(p.risk) : ''}
       ${p.metricsAt ? `<div class="meta">👍 ${p.likes || 0} · 💬 ${p.comments || 0} · ↗ ${p.shares || 0}${eng ? '' : ' (עדיין אין אינטראקציה)'}</div>` : ''}
       <div class="acts">
+        ${p.status !== 'פורסם' ? `<button data-act="edit-post" data-id="${p.id}">✎ עריכה</button>` : ''}
         <button data-act="copy" data-id="${p.id}">העתקה</button>
         ${p.status !== 'פורסם' ? `<button data-act="attach-image" data-id="${p.id}">📷 ${p.image ? 'החלפת תמונה' : 'הוספת תמונה'}</button>` : ''}
         ${p.risk?.level && caps.ai && p.status !== 'פורסם' ? `<button data-act="fix-ai" data-id="${p.id}">✨ תקנו את הניסוח עם AI</button>` : ''}
@@ -485,7 +588,7 @@ function renderLeads() {
       ${!['נסגר', 'אבוד'].includes(l.stage) ? `<label class="followup ${l.next && l.next <= today() ? 'due-date' : ''}">🔔 מעקב: <input type="date" class="nextdate" data-id="${l.id}" value="${esc(l.next || '')}" aria-label="תאריך מעקב"></label>` : ''}
       <div class="acts">
         ${!['נסגר', 'אבוד'].includes(l.stage) ? `<button data-act="contacted" data-id="${l.id}" title="מקדם את תאריך המעקב: 3 ימים, אחר כך 7">✓ יצרתי קשר</button>` : ''}
-        <button data-act="edit-note" data-id="${l.id}" title="הערה">✎</button>
+        <button data-act="edit-lead" data-id="${l.id}" title="עריכת פרטי הליד">✎ עריכה</button>
         ${i > 0 ? `<button data-act="move" data-id="${l.id}" data-stage="${STAGES[i - 1]}">→</button>` : ''}
         ${i < STAGES.length - 1 ? `<button data-act="move" data-id="${l.id}" data-stage="${STAGES[i + 1]}">←</button>` : ''}
         <button data-act="move" data-id="${l.id}" data-stage="אבוד">✕</button>
