@@ -15,9 +15,16 @@ const mock2log = [];
 const mock2 = http.createServer((req, res) => {
   let b = ''; req.on('data', c => b += c);
   req.on('end', () => {
-    const body = b ? JSON.parse(b) : {};
-    mock2log.push({ path: req.url, body, auth: req.headers.authorization || req.headers['x-api-key'] || '' });
+    let body; try { body = b ? JSON.parse(b) : {}; } catch { body = { multipart: /multipart/.test(req.headers['content-type'] || ''), raw: b.slice(0, 2000) }; }
+    mock2log.push({ path: req.url, method: req.method, body, auth: req.headers.authorization || req.headers['x-api-key'] || '' });
     res.setHeader('content-type', 'application/json');
+    if (req.url.startsWith('/fb/')) {
+      if (req.url.includes('/photos')) return res.end(JSON.stringify({ id: 'img1', post_id: 'PAGE_123' }));
+      if (req.url.includes('/feed')) return res.end(JSON.stringify({ id: 'PAGE_555' }));
+      if (req.url.includes('/insights')) return res.end(JSON.stringify({ data: [{ spend: '123.45', impressions: '1000', clicks: '50' }] }));
+      if (req.url.includes('fan_count')) return res.end(JSON.stringify({ fan_count: 321 }));
+      if (req.url.includes('reactions')) return res.end(JSON.stringify({ reactions: { summary: { total_count: 7 } }, comments: { summary: { total_count: 2 } }, shares: { count: 1 } }));
+    }
     if (req.url === '/anthropic') {
       const prompt = body.messages?.[0]?.content || '';
       const text = prompt.includes('"posts"') ? JSON.stringify({ name: 'קמפיין AI', goal: 'מכירות', audience: 'קהל', message: 'מסר', posts: [{ day: 0, channel: 'Facebook', text: 'פוסט א' }, { day: 3, channel: 'Nope', text: 'פוסט ב' }] })
@@ -32,6 +39,7 @@ const m2 = `http://127.0.0.1:${mock2.address().port}`;
 process.env.ANTHROPIC_API_URL = m2 + '/anthropic';
 process.env.RESEND_API_URL = m2 + '/emails';
 process.env.TELEGRAM_API_URL = m2 + '/tg';
+process.env.FACEBOOK_API_URL = m2 + '/fb';
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tizon-'));
 process.env.ADMIN_EMAIL = 'a@b.co';
@@ -221,6 +229,97 @@ assert.equal(leadsNow.find(l => l.name === 'זר').campaign, '');
   await call('POST', '/api/login', { email: 'member@b.co', password: 'password123' });
   assert.equal((await call('GET', '/api/state', undefined, W)).status, 200);
   token = adminTok;
+}
+
+// ---- Compliance gate, images, Facebook metrics, follow-ups, A/B ----
+{
+  const due = () => new Date(Date.now() - 1000).toISOString();
+  const postsNow = async () => (await call('GET', '/api/state')).data.posts;
+
+  // compliance: risky medical claims wait for a person; the check endpoint and state expose the findings
+  const chk = (await call('POST', '/api/compliance/check', { text: 'המוצר מרפא ומבטיח תוצאה' })).data;
+  assert.equal(chk.level, 'high'); assert.ok(chk.findings.length >= 2);
+  assert.equal((await call('POST', '/api/compliance/check', { text: 'ייעוץ בריאות אישי' })).data.level, '');
+  const risky = (await call('POST', '/api/posts', { channel: 'Instagram', text: 'המוצר מרפא סוכרת', at: due() })).data;
+  mock2log.length = 0; await tick();
+  let rp = (await postsNow()).find(p => p.id === risky.id);
+  assert.equal(rp.status, 'ממתין לבדיקה'); assert.equal(rp.risk.level, 'high');
+  assert.ok(!mock2log.some(r => r.body?.text === 'המוצר מרפא סוכרת'), 'blocked post is never sent');
+  await call('PUT', '/api/posts/' + risky.id, { override: 1, status: 'מתוזמן' });
+  await tick();
+  assert.equal((await postsNow()).find(p => p.id === risky.id).status, 'פורסם', 'approved post goes out');
+  const fx = (await call('POST', '/api/compliance/fix', { text: 'המוצר מרפא' })).data;
+  assert.equal(fx.risk.level, '');
+  await call('PUT', '/api/settings', { values: { COMPLIANCE: 'off' } });
+  assert.equal((await postsNow()).find(p => p.id === risky.id).risk.level, '', 'check can be turned off');
+  await call('PUT', '/api/settings', { values: { COMPLIANCE: 'on' } });
+
+  // images: validated upload, public GET, size and type limits
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const up = await call('POST', '/api/media', { dataUrl: 'data:image/png;base64,' + PNG });
+  assert.equal(up.status, 201);
+  const got = await fetch(base + up.data.url);
+  assert.equal(got.status, 200); assert.equal(got.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await got.arrayBuffer()), Buffer.from(PNG, 'base64'));
+  assert.equal((await call('POST', '/api/media', { dataUrl: 'data:image/gif;base64,R0lGOD' })).status, 400);
+  assert.equal((await call('POST', '/api/media', { dataUrl: 'data:image/png;base64,AAAA' })).status, 400, 'magic bytes must match');
+  assert.equal((await call('POST', '/api/media', { dataUrl: 'data:image/jpeg;base64,/9j/' + 'A'.repeat(1.4e6) })).status, 413);
+  assert.equal((await fetch(base + '/api/media/zzzz')).status, 404);
+
+  // publishing with an image: Facebook photo upload (multipart) with a reference, plain text for text posts
+  await call('PUT', '/api/settings', { values: { FB_PAGE_ID: '1234567890', FB_PAGE_TOKEN: 'EAAB', FB_ADS_TOKEN: 'ADSTOKEN' } });
+  const fbImg = (await call('POST', '/api/posts', { channel: 'Facebook', text: 'עם תמונה', image: up.data.id, at: due() })).data;
+  const fbTxt = (await call('POST', '/api/posts', { channel: 'Facebook', text: 'בלי תמונה', at: due() })).data;
+  const igImg = (await call('POST', '/api/posts', { channel: 'Instagram', text: 'לאינסטגרם', image: up.data.id, at: due() })).data;
+  mock2log.length = 0; await tick();
+  const photo = mock2log.find(r => r.path.includes('/fb/1234567890/photos'));
+  assert.ok(photo && photo.body.multipart && photo.body.raw.includes('עם תמונה'), 'photo uploaded as multipart with caption');
+  assert.ok(mock2log.some(r => r.path.includes('/fb/1234567890/feed') && r.body.message === 'בלי תמונה'));
+  const hook = mock2log.find(r => r.path === '/hook2' && r.body.text === 'לאינסטגרם');
+  assert.match(hook.body.image_url, new RegExp(`/api/media/${up.data.id}$`), 'webhook receives a public image URL');
+  let ps = await postsNow();
+  assert.equal(ps.find(p => p.id === fbImg.id).ref, 'PAGE_123'); assert.equal(ps.find(p => p.id === fbTxt.id).ref, 'PAGE_555');
+
+  // metrics: reactions/comments/shares for recent posts + ad spend per campaign
+  const ac = (await call('POST', '/api/campaigns', { name: 'ממומן', fbCampaign: '99887766' })).data;
+  const sync = (await call('POST', '/api/sync', {})).data;
+  assert.ok(sync.posts >= 1 && sync.campaigns === 1);
+  ps = await postsNow();
+  assert.deepEqual([ps.find(p => p.id === fbImg.id).likes, ps.find(p => p.id === fbImg.id).comments, ps.find(p => p.id === fbImg.id).shares], [7, 2, 1]);
+  const camp2 = (await call('GET', '/api/state')).data.campaigns.find(x => x.id === ac.id);
+  assert.deepEqual([camp2.spent, camp2.impressions, camp2.clicks], [123.45, 1000, 50]);
+  assert.ok((await call('POST', '/api/insights', {})).data.insights.some(i => i.includes('אינטראקציה')), 'top post insight');
+  await call('PUT', '/api/settings', { clear: ['FB_PAGE_ID', 'FB_PAGE_TOKEN', 'FB_ADS_TOKEN'] });
+
+  // follow-ups: new website leads get a next-contact date, reminders go to the private chat once, "contacted" advances 1 -> 3 -> 7
+  await call('PUT', '/api/settings', { values: { TG_BOT_TOKEN: '222:BBB', TG_NOTIFY_CHAT_ID: '777' } });
+  const ilDate = new Intl.DateTimeFormat('sv', { timeZone: 'Asia/Jerusalem' }).format(Date.now());
+  const noon = Date.parse(ilDate + 'T12:00:00Z');                       // 14:00-15:00 in Israel, same date
+  const addD = (d, n) => new Date(Date.parse(d + 'T12:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+  const pubLead = (ip, body) => fetch(base + '/api/public/lead', { method: 'POST', headers: { 'content-type': 'application/json', 'x-nf-client-connection-ip': ip }, body: JSON.stringify(body) });
+  await pubLead('6.6.6.1', { name: 'מעקב', phone: '052-318-6262' });
+  let fl = (await call('GET', '/api/state')).data.leads.find(l => l.name === 'מעקב');
+  assert.equal(fl.next, addD(ilDate, 1), 'first contact due tomorrow');
+  assert.equal((await call('PUT', '/api/leads/' + fl.id, { next: 'tomorrow' })).status, 400);
+  await call('PUT', '/api/leads/' + fl.id, { next: addD(ilDate, -1) });
+  mock2log.length = 0; await tick(noon);
+  const rem = mock2log.filter(r => r.path.includes('/sendMessage') && String(r.body.text).includes('🔔'));
+  assert.equal(rem.length, 1); assert.equal(rem[0].body.chat_id, '777'); assert.ok(rem[0].body.text.includes('wa.me/972523186262'));
+  mock2log.length = 0; await tick(noon);
+  assert.equal(mock2log.filter(r => String(r.body.text).includes('🔔')).length, 0, 'one reminder per due date');
+  let c1 = (await call('POST', '/api/leads/' + fl.id + '/contacted', {})).data;
+  assert.deepEqual([c1.seq, c1.next, c1.stage], [1, addD(ilDate, 3), 'בטיפול']);
+  c1 = (await call('POST', '/api/leads/' + fl.id + '/contacted', {})).data; assert.deepEqual([c1.seq, c1.next], [2, addD(ilDate, 7)]);
+  c1 = (await call('POST', '/api/leads/' + fl.id + '/contacted', {})).data; assert.deepEqual([c1.seq, c1.next], [3, '']);
+  await call('PUT', '/api/settings', { clear: ['TG_BOT_TOKEN', 'TG_NOTIFY_CHAT_ID'] });
+
+  // A/B: the landing page passes ?v=A / ?v=B and reports compare variants per campaign
+  const ab = (await call('POST', '/api/campaigns', { name: 'בדיקת A/B', spent: 100 })).data;
+  let n = 0;
+  for (const [v, count] of [['A', 5], ['B', 2]]) for (let k = 0; k < count; k++) await pubLead('5.5.5.' + (++n), { name: `ab${v}${k}`, phone: '050', campaign: ab.id, v });
+  assert.equal((await call('GET', '/api/state')).data.leads.find(l => l.name === 'abA0').variant, 'A');
+  const abIns = (await call('POST', '/api/insights', {})).data.insights.find(i => i.startsWith('🧪'));
+  assert.ok(abIns && abIns.includes('גרסה A מביאה 5 פניות מול 2'), abIns);
 }
 
 // work-plan checklist: shared, validated, returned in /state

@@ -48,9 +48,9 @@ export const server = http.createServer(async (req, res) => {
 });
 
 let running = false;
-export const tick = async () => {
+export const tick = async now => {
   if (running) return; running = true;
-  try { await app.tick(); } catch (e) { console.error('tick:', e); } finally { running = false; }
+  try { await app.tick(now); } catch (e) { console.error('tick:', e); } finally { running = false; }
 };
 setInterval(tick, 30e3).unref();
 app.ensureAdmin().catch(e => console.error(e));

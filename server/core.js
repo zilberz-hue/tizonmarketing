@@ -4,11 +4,12 @@
 import crypto from 'node:crypto';
 import { env, loadSettings, saveSettings, describeSettings, getMeta, setMeta, runWith, ctx } from './config.js';
 import { computeStats, ruleInsights, insightsPrompt, parseBullets } from './insights.js';
+import { checkText, fixPrompt } from './compliance.js';
 
 const SCHEMA = {
-  campaigns: { name: 's', goal: 's', audience: 's', channels: 'a', budget: 'n', target: 'n', start: 's', end: 's', message: 's', spent: 'n', status: 's' },
-  posts: { campaign: 's', channel: 's', at: 's', text: 's', status: 's', error: 's', publishedAt: 's', via: 's', attempts: 'n' },
-  leads: { name: 's', phone: 's', email: 's', campaign: 's', value: 'n', stage: 's', created: 's', note: 's', followedUp: 'n' }
+  campaigns: { name: 's', goal: 's', audience: 's', channels: 'a', budget: 'n', target: 'n', start: 's', end: 's', message: 's', spent: 'n', status: 's', fbCampaign: 's', impressions: 'n', clicks: 'n' },
+  posts: { campaign: 's', channel: 's', at: 's', text: 's', status: 's', error: 's', publishedAt: 's', via: 's', attempts: 'n', override: 'n', image: 's', ref: 's', likes: 'n', comments: 'n', shares: 'n', metricsAt: 's' },
+  leads: { name: 's', phone: 's', email: 's', campaign: 's', value: 'n', stage: 's', created: 's', note: 's', followedUp: 'n', variant: 's', next: 's', seq: 'n', remindedOn: 's' }
 };
 const uid = () => crypto.randomBytes(6).toString('hex');
 function pick(kind, body, base = {}) {
@@ -36,16 +37,16 @@ const send = (res, status, data, extra = {}) => {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'x-content-type-options': 'nosniff', ...extra });
   res.end(JSON.stringify(data));
 };
-function readBody(req) {
+function readBody(req, max = 100e3) {
   if (req.rawBody !== undefined || (req.body && typeof req.body === 'object' && !req.readable)) {
     // already consumed by the Cloud Functions runtime
-    if (req.rawBody !== undefined && Buffer.byteLength(req.rawBody) > 100e3) throw httpErr(413, 'גוף הבקשה גדול מדי');
+    if (req.rawBody !== undefined && Buffer.byteLength(req.rawBody) > max) throw httpErr(413, 'גוף הבקשה גדול מדי');
     try { return Promise.resolve(req.rawBody !== undefined ? (req.rawBody.length ? JSON.parse(req.rawBody) : {}) : req.body); }
     catch { throw httpErr(400, 'JSON לא תקין'); }
   }
   return new Promise((resolve, reject) => {
     let n = 0; const chunks = [];
-    req.on('data', c => { n += c.length; if (n > 100e3) { reject(httpErr(413, 'גוף הבקשה גדול מדי')); req.destroy(); } else chunks.push(c); });
+    req.on('data', c => { n += c.length; if (n > max) { reject(httpErr(413, 'גוף הבקשה גדול מדי')); req.destroy(); } else chunks.push(c); });
     req.on('end', () => { try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks)) : {}); } catch { reject(httpErr(400, 'JSON לא תקין')); } });
   });
 }
@@ -78,6 +79,14 @@ const tgApi = m => `${env('TELEGRAM_API_URL') || 'https://api.telegram.org'}/bot
 // Lead notifications contain personal data, so they must never go to a public channel/group:
 // use the private notification chat, or TG_CHAT_ID only when it is a private user chat (positive number).
 const notifyChat = () => env('TG_NOTIFY_CHAT_ID') || (/^\d+$/.test(env('TG_CHAT_ID')) ? env('TG_CHAT_ID') : '');
+const fbApi = () => env('FACEBOOK_API_URL') || 'https://graph.facebook.com/v19.0';
+let lastOrigin = '';
+const siteBase = () => (env('SITE_URL') || process.env.URL || lastOrigin).replace(/\/$/, '');
+async function postForm(url, fd) {
+  const r = await fetch(url, { method: 'POST', body: fd, signal: AbortSignal.timeout(30000) });
+  if (!r.ok) throw new Error(`${new URL(url).hostname} ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return r.json().catch(() => ({}));
+}
 const connectors = () => ({
   facebook: !!(env('FB_PAGE_ID') && env('FB_PAGE_TOKEN')),
   telegram: !!(env('TG_BOT_TOKEN') && env('TG_CHAT_ID')),
@@ -101,6 +110,10 @@ function waLink(phone) {
   if (d.startsWith('0')) d = '972' + d.slice(1);
   return d.length >= 9 && d.length <= 15 ? `https://wa.me/${d}` : '';
 }
+const israelDate = (t = Date.now()) => new Intl.DateTimeFormat('sv', { timeZone: 'Asia/Jerusalem' }).format(t);
+const israelHour = (t = Date.now()) => +new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jerusalem', hour: '2-digit', hour12: false }).format(t);
+const addDays = (ymd, n) => new Date(Date.parse(ymd + 'T12:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+const FOLLOW_STEPS = [1, 3, 7]; // days after the previous contact
 const oneLine = s => String(s || '').replace(/[\r\n]+/g, ' ').slice(0, 120);
 
 async function onNewLead(lead) {
@@ -142,19 +155,36 @@ async function testService(name) {
   }
   throw new Error('שירות לא מוכר');
 }
-async function publish(post, campaign) {
+async function publish(post, campaign, loadMedia) {
   const c = connectors(), ch = post.channel;
+  const img = post.image ? await loadMedia(post.image) : null;
+  const blob = img ? new Blob([Buffer.from(img.data, 'base64')], { type: img.type }) : null;
   if (ch === 'Facebook' && c.facebook) {
-    await postJson(`https://graph.facebook.com/v19.0/${encodeURIComponent(env('FB_PAGE_ID'))}/feed`, { message: post.text, access_token: env('FB_PAGE_TOKEN') });
-    return 'facebook';
+    const page = encodeURIComponent(env('FB_PAGE_ID'));
+    if (blob) {
+      const fd = new FormData();
+      fd.append('source', blob, 'image'); fd.append('caption', post.text); fd.append('access_token', env('FB_PAGE_TOKEN'));
+      const r = await postForm(`${fbApi()}/${page}/photos`, fd);
+      return { via: 'facebook', ref: r.post_id || r.id || '' };
+    }
+    const r = await postJson(`${fbApi()}/${page}/feed`, { message: post.text, access_token: env('FB_PAGE_TOKEN') });
+    return { via: 'facebook', ref: r.id || '' };
   }
   if (ch === 'Telegram' && c.telegram) {
-    await postJson(tgApi('sendMessage'), { chat_id: env('TG_CHAT_ID'), text: post.text });
-    return 'telegram';
+    if (blob) {
+      const fd = new FormData(), short = post.text.length <= 1000;
+      fd.append('chat_id', env('TG_CHAT_ID')); fd.append('photo', blob, 'image'); if (short) fd.append('caption', post.text);
+      const r = await postForm(tgApi('sendPhoto'), fd);
+      if (!short) await postJson(tgApi('sendMessage'), { chat_id: env('TG_CHAT_ID'), text: post.text });
+      return { via: 'telegram', ref: String(r.result?.message_id || '') };
+    }
+    const r = await postJson(tgApi('sendMessage'), { chat_id: env('TG_CHAT_ID'), text: post.text });
+    return { via: 'telegram', ref: String(r.result?.message_id || '') };
   }
   if (c.webhook) {
-    await postJson(env('PUBLISH_WEBHOOK_URL'), { event: 'post.publish', channel: ch, text: post.text, campaign: campaign?.name || '', at: post.at });
-    return 'webhook';
+    await postJson(env('PUBLISH_WEBHOOK_URL'), { event: 'post.publish', channel: ch, text: post.text, campaign: campaign?.name || '', at: post.at,
+      ...(img && siteBase() ? { image_url: `${siteBase()}/api/media/${post.image}` } : {}) });
+    return { via: 'webhook', ref: '' };
   }
   return null;
 }
@@ -230,6 +260,7 @@ export function createApp(store) {
     }
   })().catch(e => { bootstrapped = undefined; throw e; });
 
+  const base = store; // unscoped store (users, sessions, media, workspaces)
   // ---- workspaces (agency mode): per-client data under kind prefixes; "main" keeps the original, unprefixed kinds ----
   const scoped = ws => {
     if (ws === 'main') return store;
@@ -276,43 +307,102 @@ export function createApp(store) {
     await setMeta(store, { lastDigest: new Date(now).toISOString() });
   }
 
-  async function tick() {
+  async function tick(now = Date.now()) {
     await ensureAdmin();
-    const now = Date.now();
     for (const { id: ws } of await listWorkspaces()) {
       const S = scoped(ws);
       await runWith({ ws, overrides: await loadSettings(S, ws) }, () => tickWorkspace(S, now)).catch(e => console.error('tick', ws, e));
     }
   }
 
+  const loadMedia = id => (id ? base.get('media', id) : null);
+
+  // Facebook reactions/comments/shares for recent posts, page followers, and ad spend per campaign (best effort).
+  async function syncMetrics(S, now, force = false) {
+    if (!connectors().facebook) return { posts: 0, campaigns: 0 };
+    const meta = await getMeta(S);
+    if (!force && now - (Date.parse(meta.lastMetrics) || 0) < 6 * 3600e3) return { posts: 0, campaigns: 0 };
+    let posts = 0, campaigns = 0;
+    for (const p of await S.list('posts')) {
+      if (p.via !== 'facebook' || !p.ref || !p.publishedAt || now - Date.parse(p.publishedAt) > 30 * 864e5) continue;
+      try {
+        const r = await getJson(`${fbApi()}/${encodeURIComponent(p.ref)}?fields=reactions.summary(true),comments.summary(true),shares&access_token=${encodeURIComponent(env('FB_PAGE_TOKEN'))}`);
+        await S.put('posts', p.id, { ...p, likes: r.reactions?.summary?.total_count || 0, comments: r.comments?.summary?.total_count || 0, shares: r.shares?.count || 0, metricsAt: new Date(now).toISOString() });
+        posts++;
+      } catch (e) { console.error('metrics post:', e.message); }
+    }
+    if (env('FB_ADS_TOKEN')) {
+      for (const c of await S.list('campaigns')) {
+        if (!c.fbCampaign) continue;
+        try {
+          const r = await getJson(`${fbApi()}/${encodeURIComponent(c.fbCampaign)}/insights?fields=spend,impressions,clicks&date_preset=maximum&access_token=${encodeURIComponent(env('FB_ADS_TOKEN'))}`);
+          const d = r.data?.[0]; if (!d) continue;
+          await S.put('campaigns', c.id, { ...c, spent: +d.spend || 0, impressions: +d.impressions || 0, clicks: +d.clicks || 0 });
+          campaigns++;
+        } catch (e) { console.error('metrics campaign:', e.message); }
+      }
+    }
+    try {
+      const f = await getJson(`${fbApi()}/${encodeURIComponent(env('FB_PAGE_ID'))}?fields=fan_count,followers_count&access_token=${encodeURIComponent(env('FB_PAGE_TOKEN'))}`);
+      await setMeta(S, { fans: f.followers_count ?? f.fan_count ?? null });
+    } catch (e) { console.error('metrics page:', e.message); }
+    await setMeta(S, { lastMetrics: new Date(now).toISOString() });
+    return { posts, campaigns };
+  }
+
   async function tickWorkspace(store, now) {
     for (const p of await store.list('posts')) {
       if (p.status !== 'מתוזמן' || !p.at || Date.parse(p.at) > now) continue;
+      // Pre-publish compliance gate: risky health claims wait for a person to fix or approve.
+      if (env('COMPLIANCE') !== 'off' && !p.override) {
+        const risk = checkText(p.text);
+        if (risk.level === 'high') {
+          await store.put('posts', p.id, { ...p, status: 'ממתין לבדיקה', error: 'ניסוח עלול להיחשב הבטחה רפואית: ' + risk.findings.filter(f => f.level === 'high').map(f => f.match).join(', ') });
+          await notify(`🛑 פוסט ל-${p.channel} נעצר לבדיקה (ניסוח רפואי בעייתי):\\n${p.text.slice(0, 200)}`, 'post.blocked');
+          continue;
+        }
+      }
       if (!await store.claim('posts', p.id, 'מתוזמן', 'מפרסם')) continue;
       try {
-        const via = await publish(p, await store.get('campaigns', p.campaign || ''));
-        await store.put('posts', p.id, via
-          ? { ...p, status: 'פורסם', via, publishedAt: new Date().toISOString(), error: '' }
+        const r = await publish(p, await store.get('campaigns', p.campaign || ''), loadMedia);
+        await store.put('posts', p.id, r
+          ? { ...p, status: 'פורסם', via: r.via, ref: r.ref, publishedAt: new Date().toISOString(), error: '' }
           : { ...p, status: 'ידני', error: 'אין חיבור לערוץ – יש לפרסם ידנית' });
-        if (!via) await notify(`⏰ פוסט ל-${p.channel} ממתין לפרסום ידני:\n${p.text.slice(0, 200)}`, 'post.manual');
+        if (!r) await notify(`⏰ פוסט ל-${p.channel} ממתין לפרסום ידני:\\n${p.text.slice(0, 200)}`, 'post.manual');
       } catch (e) {
         const attempts = (p.attempts || 0) + 1;
         await store.put('posts', p.id, { ...p, attempts, error: e.message, status: attempts >= 3 ? 'נכשל' : 'מתוזמן', at: attempts >= 3 ? p.at : new Date(now + attempts * 5 * 60e3).toISOString() });
         if (attempts >= 3) await notify(`❌ פרסום ל-${p.channel} נכשל: ${e.message}`, 'post.failed');
       }
     }
+    const today = israelDate(now), hourNow = israelHour(now);
     for (const l of await store.list('leads')) {
       if (l.stage === 'חדש' && !l.followedUp && now - Date.parse(l.created) > 2 * 864e5) {
         await store.put('leads', l.id, { ...l, followedUp: 1 });
         await notify(`📞 ליד ממתין יותר מיומיים: ${l.name} ${l.phone} ${l.email}`, 'lead.stale', { lead: l });
+        continue;
+      }
+      // Follow-up reminders (from 08:00 Israel time, once per due date).
+      if (env('FOLLOWUP') !== 'off' && hourNow >= 8 && l.next && l.next <= today && l.remindedOn !== l.next && !['נסגר', 'אבוד'].includes(l.stage)) {
+        await store.put('leads', l.id, { ...l, remindedOn: l.next });
+        const wa = waLink(l.phone);
+        await notify(`🔔 היום לחזור אל ${oneLine(l.name)} ${l.phone || ''}${wa ? `\\n💬 ${wa}` : ''}`, 'lead.followup', { lead: l });
       }
     }
+    await syncMetrics(store, now).catch(e => console.error('metrics:', e.message));
     await digest(store, now).catch(e => console.error('digest:', e.message));
   }
 
   async function api(req, res, url, store, user, ws) {
     const parts = url.pathname.replace(/^\/api(?=\/|$)/, '').split('/').filter(Boolean);
     const method = req.method, ip = clientIp(req);
+
+    if (parts[0] === 'media' && method === 'GET' && parts[1]) {
+      const m = /^[a-f0-9]{24}$/.test(parts[1]) ? await base.get('media', parts[1]) : null;
+      if (!m) throw httpErr(404, 'לא נמצא');
+      res.writeHead(200, { 'content-type': m.type, 'cache-control': 'public, max-age=31536000, immutable', 'x-content-type-options': 'nosniff' });
+      return res.end(Buffer.from(m.data, 'base64'));
+    }
 
     if (parts[0] === 'public' && parts[1] === 'lead') {
       const cors = env('ALLOWED_ORIGIN') ? { 'access-control-allow-origin': env('ALLOWED_ORIGIN'), 'access-control-allow-headers': 'content-type' } : {};
@@ -328,7 +418,7 @@ export function createApp(store) {
       await runWith({ ws: lws, overrides: await loadSettings(LS, lws) }, async () => {
         const cid = String(b.campaign || '').slice(0, 40);
         const attributed = cid && await LS.get('campaigns', cid) ? cid : '';
-        const lead = await LS.put('leads', uid(), pick('leads', { name: b.name, phone: b.phone, email: b.email, note: b.message, campaign: attributed }, { created: new Date().toISOString().slice(0, 10), stage: 'חדש', value: 0 }));
+        const lead = await LS.put('leads', uid(), pick('leads', { name: b.name, phone: b.phone, email: b.email, note: b.message, campaign: attributed, variant: /^[A-Za-z0-9]{1,10}$/.test(String(b.v || '')) ? String(b.v) : '', next: env('FOLLOWUP') !== 'off' ? addDays(israelDate(), 1) : '', seq: 0 }, { created: new Date().toISOString().slice(0, 10), stage: 'חדש', value: 0 }));
         await onNewLead(lead);
       });
       return send(res, 200, { ok: true }, cors);
@@ -357,7 +447,8 @@ export function createApp(store) {
         Promise.all(['campaigns', 'posts', 'leads'].map(k => store.list(k))), store.get('checklist', 'main')]);
       const names = new Map((await listWorkspaces()).map(w => [w.id, w.name]));
       const workspaces = (await accessFor(user)).map(id => ({ id, name: names.get(id) }));
-      return send(res, 200, { me: user, ws, workspaces, campaigns, posts, leads, checklist: checklist?.done || {}, caps: { ...connectors(), ai: !!env('ANTHROPIC_API_KEY') } });
+      const risky = env('COMPLIANCE') === 'off' ? () => ({ level: '', findings: [] }) : p => checkText(p.text);
+      return send(res, 200, { me: user, ws, workspaces, campaigns, posts: posts.map(p => ({ ...p, risk: risky(p) })), leads, checklist: checklist?.done || {}, caps: { ...connectors(), ai: !!env('ANTHROPIC_API_KEY') } });
     }
 
     if (parts[0] === 'workspaces') {
@@ -406,6 +497,45 @@ export function createApp(store) {
         }
         return send(res, 201, { ok: true });
       }
+    }
+
+    if (parts[0] === 'media' && method === 'POST') {
+      if (limited('media:' + user.email, 60, 3600e3)) throw httpErr(429, 'יותר מדי העלאות, נסו שוב מאוחר יותר');
+      const { dataUrl } = await readBody(req, 1.5e6);
+      const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
+      if (!m) throw httpErr(400, 'תמונה לא תקינה (JPEG, PNG או WebP)');
+      const buf = Buffer.from(m[2], 'base64');
+      if (buf.length > 1e6) throw httpErr(413, 'התמונה גדולה מדי (עד 1MB)');
+      const okMagic = { 'image/jpeg': [0xff, 0xd8, 0xff], 'image/png': [0x89, 0x50, 0x4e, 0x47], 'image/webp': [0x52, 0x49, 0x46, 0x46] }[m[1]].every((b, i) => buf[i] === b);
+      if (!okMagic) throw httpErr(400, 'קובץ התמונה פגום');
+      const id = crypto.randomBytes(12).toString('hex');
+      await base.put('media', id, { ws, type: m[1], data: m[2], created: new Date().toISOString() });
+      return send(res, 201, { id, url: `/api/media/${id}` });
+    }
+
+    if (parts[0] === 'compliance' && method === 'POST') {
+      const b = await readBody(req);
+      if (parts[1] === 'check' && Array.isArray(b.texts)) return send(res, 200, b.texts.slice(0, 30).map(x => checkText(String(x || '').slice(0, 4000))));
+      const text = String(b.text || '').slice(0, 4000);
+      if (parts[1] === 'check') return send(res, 200, checkText(text));
+      if (parts[1] === 'fix') {
+        if (!env('ANTHROPIC_API_KEY')) throw httpErr(400, 'לתיקון אוטומטי נדרש מפתח AI בהגדרות');
+        if (limited('ai:' + user.email, 30, 3600e3)) throw httpErr(429, 'חריגה ממכסת AI לשעה');
+        const fixed = await claude(fixPrompt(text, checkText(text).findings, env('BUSINESS_PROFILE')), 800);
+        return send(res, 200, { text: fixed, risk: checkText(fixed) });
+      }
+    }
+
+    if (parts[0] === 'sync' && method === 'POST') {
+      if (limited('sync:' + user.email, 10, 3600e3)) throw httpErr(429, 'יותר מדי סנכרונים, נסו שוב מאוחר יותר');
+      if (!connectors().facebook) throw httpErr(400, 'חברו קודם את פייסבוק בהגדרות');
+      return send(res, 200, await syncMetrics(store, Date.now(), true));
+    }
+
+    if (parts[0] === 'leads' && parts[1] && parts[2] === 'contacted' && method === 'POST') {
+      const l = await store.get('leads', parts[1]); if (!l) throw httpErr(404, 'לא נמצא');
+      const seq = (l.seq || 0) + 1, gap = FOLLOW_STEPS[seq];
+      return send(res, 200, await store.put('leads', l.id, { ...l, seq, next: gap ? addDays(israelDate(), gap) : '', remindedOn: '', stage: l.stage === 'חדש' ? 'בטיפול' : l.stage }));
     }
 
     if (parts[0] === 'checklist' && method === 'POST') {
@@ -492,15 +622,21 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
 
     if (SCHEMA[parts[0]]) {
       const kind = parts[0], id = parts[1];
+      const guard = b => { if (kind === 'leads' && b.next && !/^\d{4}-\d{2}-\d{2}$/.test(String(b.next))) throw httpErr(400, 'תאריך לא תקין'); return b; };
       if (method === 'POST' && !id) {
         const defaults = { campaigns: { status: 'פעיל', spent: 0 }, posts: { status: 'מתוזמן' }, leads: { stage: 'חדש', created: new Date().toISOString().slice(0, 10) } }[kind];
-        return send(res, 201, await store.put(kind, uid(), pick(kind, await readBody(req), defaults)));
+        return send(res, 201, await store.put(kind, uid(), pick(kind, guard(await readBody(req)), defaults)));
       }
       if (id && method === 'PUT') {
         const cur = await store.get(kind, id); if (!cur) throw httpErr(404, 'לא נמצא');
-        return send(res, 200, await store.put(kind, id, pick(kind, await readBody(req), cur)));
+        return send(res, 200, await store.put(kind, id, pick(kind, guard(await readBody(req)), cur)));
       }
-      if (id && method === 'DELETE') { await store.del(kind, id); return send(res, 200, { ok: true }); }
+      if (id && method === 'DELETE') {
+        const cur = kind === 'posts' ? await store.get('posts', id) : null;
+        await store.del(kind, id);
+        if (cur?.image && !(await store.list('posts')).some(p => p.image === cur.image)) await base.del('media', cur.image);
+        return send(res, 200, { ok: true });
+      }
     }
     throw httpErr(404, 'Not found');
   }
@@ -515,6 +651,8 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
         if (!(await accessFor(user)).includes(want)) throw httpErr(403, 'אין גישה לסביבת העבודה');
         ws = want;
       }
+      const host = req.headers['x-forwarded-host'] || req.headers.host;
+      if (host && /^[\w.:-]+$/.test(host)) lastOrigin = `${req.headers['x-forwarded-proto'] || (/^(localhost|127\.)/.test(host) ? 'http' : 'https')}://${host}`;
       const S = scoped(ws);
       await runWith({ ws, overrides: await loadSettings(S, ws) }, () => api(req, res, url, S, user, ws));
     } catch (e) {

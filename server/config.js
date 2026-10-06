@@ -31,7 +31,8 @@ export const GROUPS = [
     help: 'ב-developers.facebook.com ← Graph API Explorer ← הרשאות pages_manage_posts ו-pages_show_list ← טוקן דף.',
     fields: [
       { key: 'FB_PAGE_ID', label: 'מזהה הדף (Page ID)' },
-      { key: 'FB_PAGE_TOKEN', label: 'טוקן הדף', secret: true }
+      { key: 'FB_PAGE_TOKEN', label: 'טוקן הדף', secret: true },
+      { key: 'FB_ADS_TOKEN', label: 'טוקן לנתוני קידום ממומן (אופציונלי)', secret: true }
     ] },
   { id: 'telegram', title: '✈️ טלגרם', desc: 'פרסום לערוץ או לקבוצה, והתראות פרטיות אליכם על לידים.', test: 'telegram', required: ['TG_BOT_TOKEN'], needAny: ['TG_CHAT_ID', 'TG_NOTIFY_CHAT_ID'],
     help: 'ב-BotFather יוצרים בוט (/newbot) ומעתיקים את הטוקן. לפרסום: מוסיפים את הבוט כמנהל בערוץ, ומזינים @שם_הערוץ (ערוץ ציבורי) או מספר שיחה. להתראות: שולחים לבוט הודעה בצ׳אט פרטי, ומזינים את מספר הצ׳אט שלכם. פרטיות: התראות על לידים כוללות שמות וטלפונים, ולכן אף פעם לא נשלחות לערוץ הפרסום.',
@@ -55,6 +56,8 @@ export const GROUPS = [
   { id: 'general', title: '⚙️ כללי', desc: '', required: [],
     fields: [
       { key: 'WEEKLY_DIGEST', label: 'סיכום שבועי אליכם (טלגרם או אימייל)', type: 'select', options: yesNo, default: 'on' },
+      { key: 'COMPLIANCE', label: 'בדיקת תאימות לפני פרסום (עוצרת ניסוחים רפואיים בעייתיים)', type: 'select', options: yesNo, default: 'on' },
+      { key: 'FOLLOWUP', label: 'תזכורות מעקב ללידים (יום 1, 3, 7)', type: 'select', options: yesNo, default: 'on' },
       { key: 'AUTO_APPROVE', label: 'פוסטים שה-AI יוצר מתפרסמים בלי אישור', type: 'select', options: [['false', 'לא, לאשר ידנית'], ['true', 'כן, אוטומטית']], default: 'false' }
     ] }
 ];
