@@ -3,7 +3,7 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = n => '₪' + Math.round(n || 0).toLocaleString('he-IL');
 
-let db = { campaigns: [], posts: [], leads: [] };
+let db = { campaigns: [], posts: [], leads: [], checklist: {} };
 let me = null, caps = {};
 const camp = id => db.campaigns.find(c => c.id === id);
 const campName = id => camp(id)?.name || 'ללא קמפיין';
@@ -31,7 +31,7 @@ const localTime = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toL
 async function refresh() {
   const s = await api('GET', '/state');
   me = s.me; caps = s.caps;
-  db = { campaigns: s.campaigns, leads: s.leads, posts: s.posts.map(p => ({ ...p, date: localDate(p.at), time: localTime(p.at) })) };
+  db = { checklist: s.checklist || {}, campaigns: s.campaigns, leads: s.leads, posts: s.posts.map(p => ({ ...p, date: localDate(p.at), time: localTime(p.at) })) };
   $('#login').hidden = true;
   render();
 }
@@ -321,6 +321,7 @@ function render() {
   $('#tab-settings').hidden = me?.role !== 'admin';
   $('#insights-ai').hidden = !caps.ai;
   renderCampaigns(); renderPosts(); renderLeads(); renderReports(); renderDash();
+  if (typeof renderPlan === 'function') renderPlan();
 }
 
 // stats
@@ -405,6 +406,7 @@ function renderDash() {
   const due = db.posts.filter(p => ['ידני','נכשל'].includes(p.status));
   const stale = db.leads.filter(l => l.stage === 'חדש' && (Date.now() - new Date(l.created)) > 2 * 864e5);
   $('#dash').innerHTML = `<div class="bar"><h2>סקירה</h2><button class="btn" data-act="quick-open">✨ קמפיין בדקה</button></div>
+    ${typeof planNextHtml === 'function' ? planNextHtml() : ''}
     <div class="kpis">
       <div class="kpi"><b>${db.campaigns.filter(c => c.status === 'פעיל').length}</b>קמפיינים פעילים</div>
       <div class="kpi"><b>${t.leads}</b>לידים</div>

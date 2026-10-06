@@ -153,6 +153,16 @@ assert.equal(leadsNow.find(l => l.name === 'זר').campaign, '');
   void pp;
 }
 
+// work-plan checklist: shared, validated, returned in /state
+assert.equal((await call('POST', '/api/checklist', { key: 's1', done: true })).status, 200);
+assert.equal((await call('POST', '/api/checklist', { key: 'k1@2026-10-04', done: true })).status, 200);
+assert.equal((await call('POST', '/api/checklist', { key: 'bad key!', done: true })).status, 400);
+let ck = (await call('GET', '/api/state')).data.checklist;
+assert.ok(ck.s1 && ck['k1@2026-10-04']);
+await call('POST', '/api/checklist', { key: 's1', done: false });
+ck = (await call('GET', '/api/state')).data.checklist;
+assert.ok(!ck.s1 && ck['k1@2026-10-04']);
+
 const del = await call('DELETE', '/api/posts/' + p.id);
 assert.equal(del.status, 200);
 console.log('all tests passed');
