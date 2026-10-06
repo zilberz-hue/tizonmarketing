@@ -8,6 +8,7 @@ let me = null, caps = {}, workspaces = [], currentWs = 'main';
 const camp = id => db.campaigns.find(c => c.id === id);
 const campName = id => camp(id)?.name || 'ללא קמפיין';
 
+let formDirty = false; // set while a form has unsaved input (see the auto-refresh below)
 const TOKEN_KEY = 'tizon-token';
 const WS_KEY = 'tizon-ws';
 const getWs = () => { try { return localStorage.getItem(WS_KEY) || 'main'; } catch { return 'main'; } };
@@ -115,6 +116,7 @@ const localDate = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toL
 const localTime = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', hour12: false }); };
 async function refresh() {
   const s = await api('GET', '/state');
+  formDirty = false;
   me = s.me; caps = s.caps; workspaces = s.workspaces || []; currentWs = s.ws || 'main';
   db = { checklist: s.checklist || {}, campaigns: s.campaigns, leads: s.leads, posts: s.posts.map(p => ({ ...p, date: localDate(p.at), time: localTime(p.at) })) };
   $('#login').hidden = true;
@@ -710,4 +712,10 @@ function renderReports() {
 
 
 refresh().catch(() => showLogin());
-setInterval(() => { if ($('#login').hidden && !document.hidden) refresh().catch(() => {}); }, 30000);
+// Auto-refresh must never wipe a form someone is filling in: skip it while any field in the page was edited and not
+// yet submitted, while a field has focus, or while a dialog is open.
+document.addEventListener('input', e => { if (e.target.closest('main form')) formDirty = true; });
+document.addEventListener('submit', () => { formDirty = false; }, true);
+document.addEventListener('reset', () => { formDirty = false; });
+const busyEditing = () => formDirty || !!document.querySelector('dialog[open]') || !!document.activeElement?.closest('main input, main textarea, main select');
+setInterval(() => { if ($('#login').hidden && !document.hidden && !busyEditing()) refresh().catch(() => {}); }, 30000);
