@@ -131,6 +131,7 @@ const EVENT_TEXT = {
   'settings.update': e => `עודכנו הגדרות (${(e.fields || []).join(', ')})`, 'media.create': () => 'הועלתה תמונה או באנר', 'plan.tick': e => `${e.done ? 'סומנה' : 'בוטלה'} משימה בתוכנית העבודה (${e.label})`,
   'workspace.create': e => `נוצרה סביבת עבודה "${e.label}"`, 'access.update': e => `עודכנו הרשאות של ${e.label}`, 'user.create': e => `נוסף איש צוות ${e.label}`, 'user.role': e => `שונה תפקיד של ${e.label} ל${e.role === 'admin' ? 'מנהל' : 'חבר צוות'}`,
   'patients.create': () => 'נוסף מטופל', 'patients.update': () => 'עודכנו פרטי מטופל', 'patients.delete': () => 'נמחק מטופל וכל הנתונים שלו', 'care.entry': e => `נרשמה רשומת ליווי (${e.kind})`, 'care.link': e => (e.revoked ? 'בוטל קישור ליווי למטופל' : 'נוצר קישור ליווי למטופל'), 'care.patient': e => `מטופל שלח ${e.kind === 'question' ? 'שאלה' : 'עדכון'}`,
+  'ideas.create': e => `נוספה הצעת יעול: "${e.label}"`, 'ideas.status': e => `הצעת יעול "${e.label}" עברה ל-${e.status}`, 'ideas.delete': e => `נמחקה הצעת יעול "${e.label}"`,
   'knowledge.add': e => `נרשם ${e.kind === 'need' ? 'צורך' : e.kind === 'decision' ? 'החלטה' : 'הערה'}: "${e.label}"`, 'academy.lesson': e => `הושלם שיעור "${e.label}" (${e.score}%)`
 };
 const describeEvent = e => (e.type.startsWith('ai.') ? `שימוש ב-AI (${e.type.slice(3)})` : (EVENT_TEXT[e.type]?.(e) || e.type));
@@ -160,6 +161,8 @@ async function addEntry(S, pid, by, type, body, extra = {}) {
   const at = new Date().toISOString();
   return S.put('care', `${pid}-${String(Date.now()).padStart(13, '0')}-${crypto.randomBytes(2).toString('hex')}`, { patient: pid, at, by, type, ...cleanEntry(body), ...extra });
 }
+const IDEA_AREAS = ['קמפיינים', 'לוח תוכן', 'לידים', 'מטופלים', 'הדרכה', 'הגדרות', 'דוחות', 'אחר'], IDEA_STATUS = ['חדש', 'בבדיקה', 'אושר', 'בוצע', 'נדחה'];
+const ideaView = (i, user) => { const { votes = [], ...rest } = i; return { ...rest, votes: votes.length, voted: votes.includes(user.email), mine: i.byEmail === user.email }; };
 async function logEvent(S, user, type, data = {}) {
   try {
     const clean = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 120) : Array.isArray(v) ? v.map(x => String(x).slice(0, 40)).slice(0, 12) : v]));
@@ -1023,6 +1026,49 @@ ${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
       }
       await logEvent(store, user, 'campaigns.reorder', { count: n });
       return send(res, 200, { ok: true, updated: n });
+    }
+
+    if (parts[0] === 'ideas') {
+      const id = parts[1], sub = parts[2], admin = user.role === 'admin';
+      const need = async () => { const i = /^[a-f0-9]{12}$/.test(id || '') ? await store.get('ideas', id) : null; if (!i) throw httpErr(404, 'לא נמצא'); return i; };
+      const clean = (b, cur = {}) => {
+        const out = { ...cur };
+        if ('title' in b) out.title = String(b.title || '').trim().slice(0, 120);
+        if ('body' in b) out.body = String(b.body || '').trim().slice(0, 2000);
+        if ('area' in b && IDEA_AREAS.includes(b.area)) out.area = b.area;
+        if (!out.title) throw httpErr(400, 'נא למלא כותרת');
+        return out;
+      };
+      if (!id && method === 'GET') return send(res, 200, (await store.list('ideas')).map(i => ideaView(i, user)).sort((a, b) => b.created.localeCompare(a.created)));
+      if (!id && method === 'POST') {
+        const body = await readBody(req), base = clean(body);
+        const i = await store.put('ideas', uid(), { area: 'אחר', ...base, status: 'חדש', by: user.name || user.email, byEmail: user.email, created: new Date().toISOString(), votes: [user.email] });
+        await logEvent(store, user, 'ideas.create', { label: i.title });
+        return send(res, 201, ideaView(i, user));
+      }
+      if (id && !sub && method === 'PUT') {
+        const cur = await need(), b = await readBody(req);
+        if (!admin && cur.byEmail !== user.email) throw httpErr(403, 'אפשר לערוך רק הצעות שכתבתם');
+        const next = clean(b, cur);
+        if ('status' in b && b.status !== cur.status) {
+          if (!admin) throw httpErr(403, 'רק מנהל משנה סטטוס');
+          if (!IDEA_STATUS.includes(b.status)) throw httpErr(400, 'סטטוס לא תקין');
+          next.status = b.status; await logEvent(store, user, 'ideas.status', { label: cur.title, status: b.status });
+        }
+        return send(res, 200, ideaView(await store.put('ideas', id, next), user));
+      }
+      if (id && sub === 'vote' && method === 'POST') {
+        const cur = await need(), votes = new Set(cur.votes || []);
+        votes.has(user.email) ? votes.delete(user.email) : votes.add(user.email);
+        return send(res, 200, ideaView(await store.put('ideas', id, { ...cur, votes: [...votes] }), user));
+      }
+      if (id && !sub && method === 'DELETE') {
+        const cur = await need();
+        if (!admin && cur.byEmail !== user.email) throw httpErr(403, 'אפשר למחוק רק הצעות שכתבתם');
+        await store.del('ideas', id); await logEvent(store, user, 'ideas.delete', { label: cur.title });
+        return send(res, 200, { ok: true });
+      }
+      throw httpErr(404, 'Not found');
     }
 
     if (parts[0] === 'patients') {
