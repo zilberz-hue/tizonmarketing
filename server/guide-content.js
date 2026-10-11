@@ -3,8 +3,8 @@
 // (scripts/build-manual.js). RULE: every shipped feature adds a release entry and, if users must learn it, a lesson.
 
 export const TRACKS = {
-  chief: { name: 'קמפיינרית ראשית (נטלי)', desc: 'המסלול המלא: מהיכרות עם המערכת ועד ניהול לקוחות וסביבות עבודה.', lessons: ['welcome', 'quick-campaign', 'content-board', 'banner-studio', 'ai-fields', 'compliance', 'leads', 'measure', 'integrations', 'agency', 'patients', 'knowledge'] },
-  basic: { name: 'משתמש רגיל', desc: 'הכלים היומיומיים: קמפיין, תוכן, לידים ודוחות.', lessons: ['welcome', 'quick-campaign', 'content-board', 'banner-studio', 'compliance', 'leads', 'measure'] }
+  chief: { name: 'קמפיינרית ראשית (נטלי)', desc: 'המסלול המלא: מהיכרות עם המערכת ועד ניהול לקוחות וסביבות עבודה.', lessons: ['welcome', 'quick-campaign', 'content-board', 'banner-studio', 'ai-fields', 'compliance', 'leads', 'measure', 'integrations', 'agency', 'patients', 'ideas', 'knowledge'] },
+  basic: { name: 'משתמש רגיל', desc: 'הכלים היומיומיים: קמפיין, תוכן, לידים ודוחות.', lessons: ['welcome', 'quick-campaign', 'content-board', 'banner-studio', 'compliance', 'leads', 'measure', 'ideas'] }
 };
 
 // step: { t: title, d: text, tab?: tab to open, sel?: CSS selector to highlight, act?: 'click' (user clicks the target to continue) }
@@ -132,6 +132,14 @@ export const LESSONS = {
       { q: 'מתי מותר ליצור קישור לפורטל?', o: ['רק אחרי שהמטופל/ת אישר/ה', 'תמיד', 'אף פעם'], a: 0, why: 'מידע בריאותי דורש הסכמה, והמערכת לא מאפשרת קישור בלעדיה.' },
       { q: 'האם הערה פנימית מוצגת למטופל/ת?', o: ['לא, היא פנימית בלבד', 'כן', 'רק בשאלות'], a: 0, why: 'רק מדידות ותשובות מוצגות. הערות נשארות בצוות.' }
     ] },
+  ideas: { title: 'הצעות יעול', min: 2, keywords: ['הצעה', 'הצעות', 'יעול', 'שיפור', 'רעיון', 'הצבעה', 'באג'],
+    intro: 'מקום אחד לכתוב כל דבר שאפשר לשפר, ולבחור יחד מה חשוב.',
+    steps: [
+      { t: 'כותבים הצעה', d: 'כותרת קצרה, תחום ופירוט: מה הבעיה ומה ההצעה. אפשר גם לדווח כאן על באג.', tab: 'ideas', sel: '#idea-form' },
+      { t: 'מצביעים', d: 'כל אחד מצביע 👍 על מה שחשוב לו. הצעות עם הכי הרבה הצבעות עולות למעלה.', sel: '#idea-list', wait: 1500 },
+      { t: 'סטטוס', d: 'מנהל מעדכן: חדש, בבדיקה, אושר, בוצע או נדחה. אפשר לסנן לפי סטטוס.', sel: '.chips[aria-label]', wait: 1500 }
+    ],
+    quiz: [{ q: 'מי משנה סטטוס של הצעה?', o: ['מנהל', 'כל אחד', 'המערכת לבד'], a: 0, why: 'כולם כותבים ומצביעים, והמנהל מחליט על הסטטוס.' }] },
   knowledge: { title: 'איך המערכת לומדת ומלמדת', min: 4, keywords: ['ידע', 'למידה', 'מדריך', 'החלטות', 'צריכים', 'ספר הפעלה', 'ספר ידע', 'שאלה'],
     intro: 'המערכת רושמת מה קורה, ואתם מוסיפים מה צריך ומה הוחלט. מזה נבנה ספר הידע ומתעדכנת ההדרכה.',
     steps: [
@@ -146,6 +154,7 @@ export const LESSONS = {
 
 // Release notes. Newest first. Add an entry (and a lesson if needed) with every shipped change.
 export const RELEASES = [
+  { id: 'r13', date: '2026-10-11', title: 'הצעות יעול', summary: 'לשונית שבה הצוות כותב הצעות לשיפור ולדיווח על באגים, מצביע, והמנהל מעדכן סטטוס.', lessons: ['ideas'] },
   { id: 'r12', date: '2026-10-06', title: 'ליווי מטופלים ופורטל אישי', summary: 'תיק מטופל, קישור אישי לעדכון התקדמות ושאלות, תזכורת לחזור, ומחיקה וייצוא נתונים.', lessons: ['patients'] },
   { id: 'r11', date: '2026-10-06', title: 'מרכז הדרכה ולמידה עצמית', summary: 'שיעורים אינטראקטיביים, שאלו את המדריך, ספר ידע חי, יומן פעילות וספר הפעלה.', lessons: ['knowledge', 'welcome'] },
   { id: 'r10', date: '2026-10-06', title: 'מד התקדמות', summary: 'מד התקדמות בכל פעולה ארוכה: קמפיין, באנר, תמונה ו-AI.', lessons: ['quick-campaign', 'banner-studio'] },
@@ -194,6 +203,11 @@ export const MANUAL = [
 4. תאריך "לחזור בתאריך" שולח תזכורת ב-08:00.
 
 **פרטיות:** מידע בריאותי לא נכנס ליומן הפעילות, להתראות או ל-AI. הערות פנימיות לא מוצגות למטופל/ת. ייצוא ומחיקה מלאה זמינים בכל עת. זה כלי ליווי ולא תחליף לייעוץ רפואי.` },
+  { id: 'ideas', title: 'הצעות יעול', body: `לשונית "הצעות יעול": כל איש צוות כותב הצעה לשיפור המערכת או העבודה (או מדווח על באג), עם תחום ופירוט.
+
+- **הצבעה:** 👍 על מה שחשוב. הצעות פופולריות עולות למעלה.
+- **סטטוס:** מנהל מעדכן חדש, בבדיקה, אושר, בוצע או נדחה.
+- **עריכה ומחיקה:** כותב ההצעה או מנהל.` },
   { id: 'academy', title: 'מרכז ההדרכה והידע החי', body: `- **שיעורים אינטראקטיביים** שמדגישים את הכפתורים האמיתיים, עם חידון והתקדמות לכל משתמש. מנהל רואה את ההתקדמות של כולם.
 - **מה חדש:** כל עדכון למערכת נרשם עם הסבר ושיעור.
 - **שאלו את המדריך:** תשובות בעברית לפי מה שקיים במערכת ולפי הידע שלנו.

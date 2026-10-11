@@ -581,6 +581,31 @@ assert.ok(!ck.s1 && ck['k1@2026-10-04']);
   assert.equal((await call('PUT', '/api/users', { email: 'a@b.co', role: 'member' })).status, 400, 'no self-demotion');
 }
 
+// improvement suggestions: anyone writes and votes, only admins set status, authors edit their own
+{
+  const mk = await call('POST', '/api/ideas', { title: 'תבנית פוסט לחגים', body: 'שיחסוך זמן', area: 'לוח תוכן' });
+  assert.equal(mk.status, 201); assert.equal(mk.data.votes, 1); assert.equal(mk.data.status, 'חדש'); assert.equal(mk.data.area, 'לוח תוכן');
+  assert.equal((await call('POST', '/api/ideas', { title: '' })).status, 400);
+  assert.equal((await call('POST', '/api/ideas', { title: 'ללא תחום', area: 'לא קיים' })).data.area, 'אחר');
+  const iid = mk.data.id;
+  assert.equal((await call('POST', `/api/ideas/${iid}/vote`, {})).data.votes, 0, 'second click removes the vote');
+  assert.equal((await call('POST', `/api/ideas/${iid}/vote`, {})).data.voted, true);
+  assert.equal((await call('PUT', '/api/ideas/' + iid, { status: 'בוצע' })).data.status, 'בוצע');
+  assert.equal((await call('PUT', '/api/ideas/' + iid, { status: 'סתם' })).status, 400);
+  const member = await (await fetch(base + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'nat@x.co', password: 'password123' }) })).json();
+  const as = (m, p, b) => fetch(base + p, { method: m, headers: { 'content-type': 'application/json', 'x-requested-with': 'tizon', authorization: 'Bearer ' + member.token }, body: b ? JSON.stringify(b) : undefined });
+  assert.equal((await as('PUT', '/api/ideas/' + iid, { status: 'אושר' })).status, 403, 'members cannot set status or edit others');
+  assert.equal((await as('DELETE', '/api/ideas/' + iid)).status, 403);
+  const own = await (await as('POST', '/api/ideas', { title: 'הצעה של נטלי' })).json();
+  assert.equal((await as('PUT', '/api/ideas/' + own.id, { title: 'הצעה של נטלי, מעודכן' })).status, 200);
+  assert.equal((await as('PUT', '/api/ideas/' + own.id, { status: 'אושר' })).status, 403);
+  assert.equal((await as('DELETE', '/api/ideas/' + own.id)).status, 200);
+  const list = (await as('GET', '/api/ideas')).status === 200 && (await call('GET', '/api/ideas')).data;
+  assert.ok(list.length === 2 && list.every(i => typeof i.votes === 'number'));
+  assert.equal((await call('DELETE', '/api/ideas/' + iid)).status, 200);
+  assert.equal((await fetch(base + '/api/ideas')).status, 401);
+}
+
 const del = await call('DELETE', '/api/posts/' + p.id);
 assert.equal(del.status, 200);
 console.log('all tests passed');
