@@ -6,7 +6,7 @@ const AI_CHIPS = ['קצר יותר', 'חם ואישי יותר', 'מקצועי �
 
 function aiLabelFor(el) {
   if (!el?.matches?.('textarea, input[type=text], input:not([type])')) return null;
-  if (el.closest('#login-form, #user-form, #ws-form, #ai-dlg') || el.disabled || el.readOnly) return null;
+  if (el.closest('#login-form, #user-form, #team-form, #ws-form, #ai-dlg') || el.disabled || el.readOnly) return null;
   if (el.classList.contains('ptext')) return AI_NAMES.text;
   if (el.name === 'name') return el.closest('#campaign-form, #editcamp-form, #quick-launch') ? 'שם הקמפיין' : null;
   return AI_NAMES[el.name] || null;
