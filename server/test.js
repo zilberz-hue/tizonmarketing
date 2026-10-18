@@ -544,7 +544,9 @@ assert.ok(!ck.s1 && ck['k1@2026-10-04']);
   // follow-up reminder fires once, with the first name only
   const b2 = mock2log.length; await tick(); await tick(); await new Promise(r => setTimeout(r, 100));
   const rem = mock2log.slice(b2).filter(x => x.path === '/hook2' && /היום ליווי/.test(x.body.text || ''));
-  assert.equal(rem.length, 1, 'reminder fires exactly once'); assert.ok(rem[0].body.text.includes('דנה') && !rem[0].body.text.includes('כהן'));
+  const ilHour = +new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jerusalem', hour: '2-digit', hour12: false }).format(new Date());
+  assert.equal(rem.length, ilHour >= 8 ? 1 : 0, 'reminder fires exactly once, and only from 08:00 Israel time');
+  if (rem.length) assert.ok(rem[0].body.text.includes('דנה') && !rem[0].body.text.includes('כהן'));
   // activity log: no names, no health content
   const act2 = JSON.stringify((await call('GET', '/api/guide/activity?limit=200')).data);
   assert.ok(!act2.includes('כהן') && !act2.includes('קפה') && !act2.includes('82.5') && act2.includes('נוסף מטופל'));

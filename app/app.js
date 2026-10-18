@@ -197,13 +197,6 @@ $('#lead-form-app').addEventListener('submit', safe(async e => {
   e.target.reset(); await refresh();
 }));
 
-document.addEventListener('submit', safe(async e => {
-  if (e.target.id !== 'user-form') return;
-  e.preventDefault();
-  await api('POST', '/users', Object.fromEntries(new FormData(e.target)));
-  e.target.reset(); alert('המשתמש נוצר');
-}));
-
 document.addEventListener('click', safe(async e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const { act, id } = b.dataset;
@@ -541,6 +534,7 @@ function render() {
   [$('#post-campaign'), $('#lead-campaign')].forEach(s => { const v = s.value; s.innerHTML = opts; s.value = v; });
   $('#ai-text').hidden = !caps.ai;
   $('#tab-settings').hidden = me?.role !== 'admin';
+  $('#tab-team').hidden = me?.role !== 'admin';
   $('#insights-ai').hidden = !caps.ai;
   if (!window.__dragging) renderCampaigns();
   renderPosts(); renderLeads(); renderReports(); renderDash();
@@ -691,7 +685,6 @@ function renderDash() {
     ${due.length + stale.length + follow.length + held.length ? '' : '<p class="meta">אין משימות דחופות 🎉</p>'}
     <h3>מצב אוטומציה</h3>
     <p class="meta">פרסום: ${[caps.facebook && 'פייסבוק', caps.telegram && 'טלגרם', caps.webhook && 'Webhook'].filter(Boolean).join(', ') || 'לא מחובר – פוסטים יסומנו לפרסום ידני'} · AI: ${caps.ai ? 'פעיל' : 'לא מוגדר'}</p>
-    ${me?.role === 'admin' ? `<h3>הוספת איש צוות</h3><form id="user-form" class="panel"><div class="row"><label>שם <input name="name"></label><label>אימייל <input name="email" type="email" required></label><label>סיסמה (8+) <input name="password" type="password" minlength="8" required></label><label>תפקיד <select name="role"><option value="member">חבר צוות</option><option value="admin">מנהל</option></select></label></div><button class="btn btn-sm">הוספה</button></form>` : ''}
     <h3>התהליך המומלץ</h3>
     <ol><li>הגדירו קמפיין עם יעד, קהל, ערוצים ותקציב</li><li>תזמנו תוכן בלוח התוכן</li><li>הזינו כל ליד שנכנס וקדמו אותו בצנרת</li><li>עדכנו הוצאה שבועית וקראו את הדוחות</li><li>הגדילו את מה שעובד, עצרו את מה שלא</li></ol>`;
 }
