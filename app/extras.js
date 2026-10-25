@@ -126,6 +126,10 @@ function editPostDialog(id) {
         <label>שעה <input type="time" name="time" value="${esc(p.time)}" ${locked ? 'disabled' : ''}></label>
         <label>ערוץ <select name="channel" ${locked ? 'disabled' : ''}>${Object.keys(CH_ICON).map(c => `<option ${c === p.channel ? 'selected' : ''}>${c}</option>`).join('')}</select></label></div>
       <label>טקסט <textarea name="text" rows="5" ${locked ? 'disabled' : ''}>${esc(p.text)}</textarea></label>
+      <details ${p.pillar || p.bucket || p.topic || p.assetLink || p.liveLink ? 'open' : ''}><summary>פרטי תוכנית תוכן</summary><div class="row">
+        <label>עמוד תוכן <input name="pillar" value="${esc(p.pillar || '')}"></label><label>סוג תוכן <input name="bucket" value="${esc(p.bucket || '')}"></label>
+        <label>נושא <input name="topic" value="${esc(p.topic || '')}"></label><label>סוג נכס (Reel, Carousel, Banner…) <input name="assetType" value="${esc(p.assetType || '')}"></label>
+        <label>קישור לקובץ <input name="assetLink" type="url" dir="ltr" value="${esc(p.assetLink || '')}"></label><label>קישור לפוסט שפורסם <input name="liveLink" type="url" dir="ltr" value="${esc(p.liveLink || '')}"></label></div></details>
       ${thumb(p.image)}${p.status !== 'פורסם' ? riskHtml(p.risk) : ''}
       <div class="qfoot">${locked ? '' : '<button class="btn" type="submit">שמירה</button>'}${locked ? '' : '<button type="button" class="btn btn-ghost" id="postdlg-del">מחיקה</button>'}<button type="button" class="link" id="postdlg-close">סגירה</button></div>
     </form>`;
@@ -135,9 +139,9 @@ function editPostDialog(id) {
   if (del) del.onclick = safe(async () => { if (!confirm('למחוק את הפוסט?')) return; await api('DELETE', '/posts/' + id); dlg.close(); await refresh(); });
   $('#postdlg-form').onsubmit = safe(async ev => {
     ev.preventDefault();
-    const f = new FormData(ev.target), at = new Date(`${f.get('date')}T${f.get('time')}`);
-    const patch = { text: f.get('text'), channel: f.get('channel'), at: at.toISOString() };
-    if (['ידני', 'נכשל'].includes(p.status) && at > new Date()) { patch.status = 'מתוזמן'; patch.error = ''; patch.attempts = 0; }
+    const f = new FormData(ev.target), at = f.get('date') ? new Date(`${f.get('date')}T${f.get('time') || '10:00'}`) : null;
+    const patch = { text: f.get('text'), channel: f.get('channel'), at: at ? at.toISOString() : '', ...Object.fromEntries(['pillar', 'bucket', 'topic', 'assetType', 'assetLink', 'liveLink'].map(k => [k, f.get(k) || ''])) };
+    if (['ידני', 'נכשל'].includes(p.status) && at && at > new Date()) { patch.status = 'מתוזמן'; patch.error = ''; patch.attempts = 0; }
     await api('PUT', '/posts/' + id, patch); dlg.close(); await refresh(); toast('נשמר');
   });
 }

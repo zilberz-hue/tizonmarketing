@@ -610,13 +610,15 @@ function renderCampaigns() {
 
 const today = () => new Date().toLocaleDateString('sv'); // local date, YYYY-MM-DD
 function renderPosts() {
-  const posts = [...db.posts].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+  const posts = [...db.posts].sort((a, b) => (a.date ? a.date + a.time : '9999').localeCompare(b.date ? b.date + b.time : '9999'));
   $('#post-list').innerHTML = posts.map(p => {
     const due = ['ידני', 'נכשל', 'ממתין לבדיקה'].includes(p.status);
     const eng = (p.likes || 0) + (p.comments || 0) + (p.shares || 0);
     return `<article class="item ${due ? 'due' : ''}">
       <div><span class="tag">${esc(p.channel)}</span><span class="tag">${esc(p.status)}</span>${due ? '<span class="tag">⏰ דורש טיפול</span>' : ''}${p.error ? `<span class="tag">${esc(p.error)}</span>` : ''}</div>
-      <div class="meta">${esc(p.date)} ${esc(p.time)} · ${esc(campName(p.campaign))}</div>
+      <div class="meta">${p.date ? esc(p.date) + ' ' + esc(p.time) : 'ללא תאריך'} · ${esc(campName(p.campaign))}</div>
+      ${p.pillar || p.bucket || p.topic || p.assetType ? `<div>${[p.pillar, p.bucket, p.assetType].filter(Boolean).map(x => `<span class="tag">${esc(x)}</span>`).join('')}${p.topic ? `<b>${esc(p.topic)}</b>` : ''}</div>` : ''}
+      ${p.assetLink || p.liveLink ? `<div class="meta">${p.assetLink ? `<a href="${esc(p.assetLink)}" target="_blank" rel="noopener noreferrer">📁 קובץ</a> ` : ''}${p.liveLink ? `<a href="${esc(p.liveLink)}" target="_blank" rel="noopener noreferrer">🔗 הפוסט החי</a>` : ''}</div>` : ''}
       ${thumb(p.image)}
       <div style="white-space:pre-wrap">${esc(p.text)}</div>
       ${p.status !== 'פורסם' ? riskHtml(p.risk) : ''}

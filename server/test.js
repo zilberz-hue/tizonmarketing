@@ -608,6 +608,30 @@ assert.ok(!ck.s1 && ck['k1@2026-10-04']);
   assert.equal((await fetch(base + '/api/ideas')).status, 401);
 }
 
+// content-plan import: live-link rows become published records, the rest drafts; nothing is auto-scheduled; duplicates skipped
+{
+  const rows = [
+    { date: '23-10-26', pillar: 'Showcase', bucket: 'UI Walkthrough', topic: 'Website Reel', text: 'חפשים דיקור סיני?', assetType: 'Reel', assetLink: 'https://drive.google.com/file/d/x/view', liveLink: 'https://www.instagram.com/p/De1DaHUxn_U/' },
+    { date: '', pillar: 'Drive Business Goals', bucket: 'Brand Manifesto', topic: 'A post about the mission of Tizon', text: '', assetType: 'Carousel' },
+    { date: '1/11/2026', pillar: 'Validate', topic: 'About Tzachi', text: 'צחי הוא המייסד', assetLink: 'javascript:alert(1)' },
+    { date: '', text: '', topic: '' }
+  ];
+  const r = await call('POST', '/api/posts/import', { rows });
+  assert.equal(r.status, 200); assert.deepEqual([r.data.created, r.data.published, r.data.drafts, r.data.skipped], [3, 1, 2, 1]);
+  const posts = (await call('GET', '/api/state')).data.posts, by = t => posts.find(p => p.topic === t);
+  const live = by('Website Reel');
+  assert.equal(live.status, 'פורסם'); assert.equal(live.channel, 'Instagram'); assert.equal(live.at.slice(0, 10), '2026-10-23'); assert.equal(live.pillar, 'Showcase'); assert.equal(live.ref, live.liveLink);
+  assert.equal(by('A post about the mission of Tizon').status, 'טיוטה'); assert.equal(by('A post about the mission of Tizon').at, '');
+  assert.equal(by('About Tzachi').at.slice(0, 10), '2026-11-01'); assert.equal(by('About Tzachi').assetLink, '', 'non-http links are dropped');
+  const again = await call('POST', '/api/posts/import', { rows });
+  assert.equal(again.data.created, 0, 'same plan twice creates nothing');
+  assert.equal((await call('POST', '/api/posts/import', { rows: [] })).status, 400);
+  assert.equal((await call('POST', '/api/posts', { text: 'x', channel: 'Facebook', at: new Date().toISOString(), liveLink: 'ftp://x' })).status, 400);
+  await tick();
+  assert.ok((await call('GET', '/api/state')).data.posts.filter(p => /Website|mission|Tzachi/.test(p.topic || '')).every(p => ['טיוטה', 'פורסם'].includes(p.status)), 'the scheduler leaves imported rows alone');
+  for (const p of (await call('GET', '/api/state')).data.posts.filter(p => /Website|mission|Tzachi/.test(p.topic || ''))) await call('DELETE', '/api/posts/' + p.id);
+}
+
 const del = await call('DELETE', '/api/posts/' + p.id);
 assert.equal(del.status, 200);
 console.log('all tests passed');

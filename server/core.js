@@ -9,7 +9,7 @@ import { TRACKS, LESSONS, RELEASES, MANUAL, publicContent, searchLessons, manual
 
 const SCHEMA = {
   campaigns: { name: 's', goal: 's', audience: 's', channels: 'a', budget: 'n', target: 'n', start: 's', end: 's', message: 's', spent: 'n', status: 's', fbCampaign: 's', impressions: 'n', clicks: 'n', order: 'n' },
-  posts: { campaign: 's', channel: 's', at: 's', text: 's', status: 's', error: 's', publishedAt: 's', via: 's', attempts: 'n', override: 'n', image: 's', ref: 's', likes: 'n', comments: 'n', shares: 'n', metricsAt: 's' },
+  posts: { campaign: 's', channel: 's', at: 's', text: 's', status: 's', error: 's', publishedAt: 's', via: 's', attempts: 'n', override: 'n', image: 's', ref: 's', likes: 'n', comments: 'n', shares: 'n', metricsAt: 's', pillar: 's', bucket: 's', topic: 's', assetType: 's', assetLink: 's', liveLink: 's' },
   leads: { name: 's', phone: 's', email: 's', campaign: 's', value: 'n', stage: 's', created: 's', note: 's', followedUp: 'n', variant: 's', next: 's', seq: 'n', remindedOn: 's' }
 };
 const uid = () => crypto.randomBytes(6).toString('hex');
@@ -125,7 +125,7 @@ const FOLLOW_STEPS = [1, 3, 7]; // days after the previous contact
 // ---- Activity log: what was done, by whom, when. Never stores secrets or field values, only names and labels. ----
 const EVENT_TEXT = {
   'campaigns.create': e => `נוצר קמפיין "${e.label}"`, 'campaigns.update': e => `עודכן קמפיין "${e.label}" (${(e.fields || []).join(', ')})`, 'campaigns.delete': e => `נמחק קמפיין "${e.label}"`, 'campaigns.reorder': () => 'שונה סדר הקמפיינים',
-  'posts.create': e => `נוסף פוסט ל-${e.channel || 'ערוץ'}: "${e.label}"`, 'posts.update': e => `עודכן פוסט "${e.label}" (${(e.fields || []).join(', ')})`, 'posts.delete': e => `נמחק פוסט "${e.label}"`,
+  'posts.import': e => `יובאו ${e.count} פוסטים מתוכנית תוכן`, 'posts.create': e => `נוסף פוסט ל-${e.channel || 'ערוץ'}: "${e.label}"`, 'posts.update': e => `עודכן פוסט "${e.label}" (${(e.fields || []).join(', ')})`, 'posts.delete': e => `נמחק פוסט "${e.label}"`,
   'post.published': e => `פורסם פוסט ב-${e.channel}: "${e.label}"`, 'post.blocked': e => `פוסט נעצר בבדיקת תאימות: "${e.label}"`, 'post.failed': e => `פרסום נכשל ב-${e.channel}: "${e.label}"`,
   'leads.create': e => `נוסף ליד "${e.label}"`, 'leads.update': e => `עודכן ליד "${e.label}" (${(e.fields || []).join(', ')})`, 'leads.delete': e => `נמחק ליד "${e.label}"`, 'leads.contacted': e => `נרשמה שיחה עם "${e.label}"`, 'lead.website': e => `ליד חדש מהאתר: "${e.label}"`,
   'settings.update': e => `עודכנו הגדרות (${(e.fields || []).join(', ')})`, 'media.create': () => 'הועלתה תמונה או באנר', 'plan.tick': e => `${e.done ? 'סומנה' : 'בוטלה'} משימה בתוכנית העבודה (${e.label})`,
@@ -1127,9 +1127,46 @@ ${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
       throw httpErr(404, 'Not found');
     }
 
+    if (parts[0] === 'posts' && parts[1] === 'import' && method === 'POST') {
+      // Content-plan import (e.g. a pasted spreadsheet). Never schedules anything: rows with a live link are recorded as
+      // already published, everything else lands as a draft that a person approves.
+      const { rows, campaign } = await readBody(req);
+      if (!Array.isArray(rows) || !rows.length) throw httpErr(400, 'אין שורות לייבוא');
+      if (rows.length > 200) throw httpErr(400, 'עד 200 שורות בכל ייבוא');
+      const cid = campaign && await store.get('campaigns', String(campaign)) ? String(campaign) : '';
+      const parseDay = v => {
+        const t = String(v || '').trim(); let m;
+        if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t))) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+        if ((m = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})$/.exec(t))) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`; }
+        return '';
+      };
+      const link = v => (/^https?:\/\/\S+$/.test(String(v || '').trim()) ? String(v).trim().slice(0, 500) : '');
+      const existing = await store.list('posts');
+      const keyOf = p => p.liveLink || `${p.at?.slice(0, 10) || ''}|${p.topic || ''}|${String(p.text || '').slice(0, 40)}`;
+      const seen = new Set(existing.map(keyOf));
+      let created = 0, skipped = 0, published = 0;
+      for (const r of rows) {
+        const day = parseDay(r.date), live = link(r.liveLink), text = String(r.text || '').trim().slice(0, 4000);
+        const topic = String(r.topic || '').trim().slice(0, 200);
+        if (!text && !topic && !live) { skipped++; continue; }
+        const guess = /instagram\.com/i.test(live) ? 'Instagram' : /facebook\.com|fb\.watch/i.test(live) ? 'Facebook' : /tiktok\.com/i.test(live) ? 'TikTok' : /linkedin\.com/i.test(live) ? 'LinkedIn' : '';
+        const channel = CHANNELS.includes(String(r.channel || '').trim()) ? String(r.channel).trim() : guess || 'Instagram';
+        const at = day ? `${day}T09:00:00.000Z` : '';
+        const row = pick('posts', { campaign: cid, channel, text, at, topic, pillar: r.pillar, bucket: r.bucket, assetType: r.assetType, assetLink: link(r.assetLink), liveLink: live }, { status: live ? 'פורסם' : 'טיוטה', ...(live ? { via: 'ידני', ref: live, publishedAt: at || new Date().toISOString() } : {}) });
+        const k = keyOf(row); if (seen.has(k)) { skipped++; continue; } seen.add(k);
+        await store.put('posts', uid(), row); created++; if (live) published++;
+      }
+      await logEvent(store, user, 'posts.import', { count: created });
+      return send(res, 200, { created, skipped, published, drafts: created - published });
+    }
+
     if (SCHEMA[parts[0]]) {
       const kind = parts[0], id = parts[1];
-      const guard = b => { if (kind === 'leads' && b.next && !/^\d{4}-\d{2}-\d{2}$/.test(String(b.next))) throw httpErr(400, 'תאריך לא תקין'); return b; };
+      const guard = b => {
+        if (kind === 'leads' && b.next && !/^\d{4}-\d{2}-\d{2}$/.test(String(b.next))) throw httpErr(400, 'תאריך לא תקין');
+        if (kind === 'posts') for (const k of ['assetLink', 'liveLink']) if (b[k] && !/^https?:\/\/\S+$/.test(String(b[k]).trim())) throw httpErr(400, 'קישור חייב להתחיל ב-http או https');
+        return b;
+      };
       if (method === 'POST' && !id) {
         const defaults = { campaigns: { status: 'פעיל', spent: 0, order: Date.now(), channels: [] }, posts: { status: 'מתוזמן' }, leads: { stage: 'חדש', created: new Date().toISOString().slice(0, 10) } }[kind];
         const created = await store.put(kind, uid(), pick(kind, guard(await readBody(req)), defaults));
