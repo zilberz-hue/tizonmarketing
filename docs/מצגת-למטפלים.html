@@ -7,9 +7,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap">
 <style>
-:root{--gold:#8a6a35;--gold-l:#a8834a;--green:#3f7414;--ink:#2e2a22;--quiet:#5a5246;--bg:#faf7f0;--bg2:#f1eadc;--card:#fffdf8;--line:#e3d8c2;--dark:#2e2a22;--on-dark:#faf7f0;--gold-d:#d2ad6e}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--gold:#d2ad6e;--gold-l:#d2ad6e;--green:#8ccc4a;--ink:#ece8e0;--quiet:#b5ad9f;--bg:#17150f;--bg2:#201d16;--card:#262219;--line:#3a352d;--dark:#0f0d09}}
-:root[data-theme="dark"]{--gold:#d2ad6e;--gold-l:#d2ad6e;--green:#8ccc4a;--ink:#ece8e0;--quiet:#b5ad9f;--bg:#17150f;--bg2:#201d16;--card:#262219;--line:#3a352d;--dark:#0f0d09}
+:root{--up:#e6f0da;--gold:#8a6a35;--gold-l:#a8834a;--green:#3f7414;--ink:#2e2a22;--quiet:#5a5246;--bg:#faf7f0;--bg2:#f1eadc;--card:#fffdf8;--line:#e3d8c2;--dark:#2e2a22;--on-dark:#faf7f0;--gold-d:#d2ad6e}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--up:#1f2a15;--gold:#d2ad6e;--gold-l:#d2ad6e;--green:#8ccc4a;--ink:#ece8e0;--quiet:#b5ad9f;--bg:#17150f;--bg2:#201d16;--card:#262219;--line:#3a352d;--dark:#0f0d09}}
+:root[data-theme="dark"]{--up:#1f2a15;--gold:#d2ad6e;--gold-l:#d2ad6e;--green:#8ccc4a;--ink:#ece8e0;--quiet:#b5ad9f;--bg:#17150f;--bg2:#201d16;--card:#262219;--line:#3a352d;--dark:#0f0d09}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:"Heebo",system-ui,sans-serif;font-size:18px;line-height:1.65}
 .in{max-width:1040px;margin:0 auto;padding:0 16px}
@@ -43,6 +43,17 @@ ul.ticks{list-style:none;padding:0;margin:0}
 ul.ticks li{padding-inline-start:30px;position:relative;margin-bottom:12px}
 ul.ticks li::before{content:"✓";position:absolute;right:0;color:var(--green);font-weight:800}
 .note{font-size:14px;color:var(--quiet);margin-top:16px}
+section.up{background:var(--up)}
+.vs{display:grid;grid-template-columns:1fr auto 1fr;gap:20px;align-items:stretch;margin-bottom:28px}
+.vs .arrow{align-self:center;font-size:44px;font-weight:800;color:var(--green)}
+.gain{background:var(--green);color:#fff;border-radius:18px;padding:22px 26px;text-align:center;margin-bottom:28px}
+.gain .big{color:#fff;font-size:52px}
+table{width:100%;border-collapse:collapse;background:var(--card);border-radius:14px;overflow:hidden}
+th,td{padding:12px 14px;text-align:right;border-bottom:1px solid var(--line)}
+th{background:var(--bg2);font-size:15px}
+td.g{color:var(--green);font-weight:800}
+.tw{overflow-x:auto}
+@media (max-width:820px){.vs{grid-template-columns:1fr}.vs .arrow{transform:rotate(-90deg);justify-self:center}}
 .cta{background:var(--dark);color:var(--on-dark);text-align:center}
 .cta h2{color:var(--on-dark)}
 .cta .phone{display:inline-block;font-size:clamp(28px,5vw,40px);font-weight:800;background:var(--gold-d);color:#2e2a22;padding:12px 36px;border-radius:99px;text-decoration:none;direction:ltr}
@@ -132,6 +143,27 @@ footer{text-align:center;color:var(--quiet);font-size:14px;padding:24px 0}
     <div class="card"><p class="tag">שלב 3 · בכיר</p><div class="big">2,475</div><p class="muted">ש״ח בחודש, ועוד הדרכה</p><p class="small muted">1,575 מהפניות + 900 מפורמולות</p></div>
   </div>
   <p class="note">הערכה בלבד, לא התחייבות להכנסה: 5 הפניות בחודש במצב יציב, 60% מהלקוחות מזמינים פורמולות ב-400 ש״ח לחודש למשך 3 חודשים.</p>
+</div></section>
+
+<section class="up" id="certified"><div class="in">
+  <p class="eyebrow" style="color:var(--green)">מטפל מוסמך</p>
+  <h2>אותן הפניות, כמעט פי 2 כסף</h2>
+  <div class="vs">
+    <div class="card"><p class="tag">מטפל מפנה (ללא הכשרה)</p><div class="big">252</div><p class="muted">ש״ח לחודש על כל הפניה חודשית</p><hr><p class="small">תוכנית: 20% = 180 ש״ח ללקוח</p><p class="small">פורמולות: 10% = 40 ש״ח להזמנה</p></div>
+    <div class="arrow" aria-hidden="true">←</div>
+    <div class="card hl"><p class="tag">מטפל מוסמך (אחרי הכשרה)</p><div class="big">414</div><p class="muted">ש״ח לחודש על כל הפניה חודשית</p><hr><p class="small">תוכנית: 30% = 270 ש״ח ללקוח</p><p class="small">פורמולות: 20% = 80 ש״ח להזמנה</p></div>
+  </div>
+  <div class="gain"><p style="margin:0">מטפל שמפנה 5 לקוחות בחודש מרוויח אחרי ההכשרה</p><div class="big">+810 ש״ח בחודש</div><p style="margin:0">כ-9,700 ש״ח יותר בשנה (+64%). ההכשרה עולה 1,500 ש״ח, וחוזרת אליכם אחרי 5 הפניות.</p></div>
+  <div class="tw"><table>
+    <thead><tr><th>הפניות בחודש</th><th>מטפל מפנה (ש״ח לחודש)</th><th>מטפל מוסמך (ש״ח לחודש)</th><th>תוספת בשנה (ש״ח)</th></tr></thead>
+    <tbody>
+      <tr><td>3</td><td>756</td><td>1,242</td><td class="g">+5,832</td></tr>
+      <tr><td>5</td><td>1,260</td><td>2,070</td><td class="g">+9,720</td></tr>
+      <tr><td>10</td><td>2,520</td><td>4,140</td><td class="g">+19,440</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">הערכה בלבד, במצב יציב: 60% מהלקוחות מזמינים פורמולות ב-400 ש״ח לחודש למשך 3 חודשים. המטפל המוסמך מרוויח יותר כי הוא מלווה בעצמו ומזמין פורמולות בעצמו.</p>
+  <a class="btn" href="#contact" style="background:var(--green)">אני רוצה להתחיל את ההכשרה</a>
 </div></section>
 
 <section class="alt"><div class="in">
