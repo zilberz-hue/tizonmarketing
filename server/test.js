@@ -632,6 +632,26 @@ assert.ok(!ck.s1 && ck['k1@2026-10-04']);
   for (const p of (await call('GET', '/api/state')).data.posts.filter(p => /Website|mission|Tzachi/.test(p.topic || ''))) await call('DELETE', '/api/posts/' + p.id);
 }
 
+// team management: reset password, own password change, removal (blocked for self and for the last admin)
+{
+  assert.equal((await call('POST', '/api/users', { email: 'temp@x.co', name: 'זמני', password: 'password123', role: 'member' })).status, 201);
+  const login = async (email, password) => fetch(base + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }) });
+  const tk = (await (await login('temp@x.co', 'password123')).json()).token;
+  const as = (m, p, b) => fetch(base + p, { method: m, headers: { 'content-type': 'application/json', 'x-requested-with': 'tizon', authorization: 'Bearer ' + tk }, body: b ? JSON.stringify(b) : undefined });
+  assert.equal((await call('PUT', '/api/users', { email: 'temp@x.co', password: 'short' })).status, 400);
+  assert.equal((await call('PUT', '/api/users', { email: 'temp@x.co', password: 'resetpass99' })).status, 200);
+  assert.equal((await as('POST', '/api/password', { current: 'wrong', password: 'brandnew123' })).status, 400);
+  assert.equal((await as('POST', '/api/password', { current: 'password123', password: 'brandnew123' })).status, 400, 'reset replaced the password');
+  assert.equal((await as('POST', '/api/password', { current: 'resetpass99', password: 'tiny' })).status, 400);
+  assert.equal((await as('POST', '/api/password', { current: 'resetpass99', password: 'brandnew123' })).status, 200);
+  assert.equal((await as('PUT', '/api/users', { email: 'a@b.co', password: 'hijackhijack' })).status, 403, 'members cannot reset passwords');
+  assert.equal((await as('DELETE', '/api/users/a%40b.co')).status, 403);
+  assert.equal((await call('DELETE', '/api/users/a%40b.co')).status, 400, 'cannot remove yourself');
+  assert.equal((await call('DELETE', '/api/users/temp%40x.co')).status, 200);
+  assert.equal((await as('GET', '/api/state')).status, 401, 'a removed member is locked out immediately');
+  assert.equal((await call('DELETE', '/api/users/nobody%40x.co')).status, 404);
+}
+
 const del = await call('DELETE', '/api/posts/' + p.id);
 assert.equal(del.status, 200);
 console.log('all tests passed');

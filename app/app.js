@@ -142,8 +142,8 @@ $('#login-form').addEventListener('submit', safe(async e => {
 $('#logout').onclick = safe(async () => { await api('POST', '/logout').catch(() => {}); setToken(''); location.reload(); });
 
 $('#tabs').addEventListener('click', e => {
-  const t = e.target.dataset.tab; if (!t) return;
-  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b === e.target));
+  const btn = e.target.closest('button[data-tab]'); const t = btn?.dataset.tab; if (!t) return;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b === btn));
   document.querySelectorAll('.tab').forEach(s => s.classList.toggle('active', s.id === t));
   if (t === 'settings') loadSettings().catch(e => e.message !== 'auth' && alert(e.message));
   if (t === 'reports') loadInsights(false);
@@ -560,6 +560,7 @@ function stats(c) {
 // rendering
 let campView = (() => { try { return localStorage.getItem('tz-campview') || 'list'; } catch { return 'list'; } })();
 const CAMP_COLS = [['פעיל', '🟢 פעיל'], ['מושהה', '⏸ מושהה'], ['הסתיים', '✅ הסתיים']];
+let campFilter = '', campSort = '';
 const sortedCamps = () => [...db.campaigns].sort((x, y) => (x.order ?? 1e15) - (y.order ?? 1e15));
 const statusBtns = c => c.status === 'פעיל'
   ? `<button data-act="set-status" data-id="${c.id}" data-status="מושהה">⏸ השהיה</button><button data-act="set-status" data-id="${c.id}" data-status="הסתיים">סיום</button>`
@@ -583,29 +584,45 @@ function renderCampaigns() {
     }).join('');
     return;
   }
-  $('#campaign-list').innerHTML = list.map((c, i) => {
-    const s = stats(c), pct = c.budget ? Math.min(100, c.spent / c.budget * 100) : 0;
+  const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
+  campFilter = campFilter || lsGet('tz-campfilter', 'all'); campSort = campSort || lsGet('tz-campsort', 'manual');
+  const SORTS = { manual: ['סדר ידני', null], name: ['שם', (x, y) => x.name.localeCompare(y.name, 'he')], leads: ['לידים (הרבה קודם)', (x, y) => stats(y).leads - stats(x).leads], spent: ['הוצאה (הגבוהה קודם)', (x, y) => (y.spent || 0) - (x.spent || 0)], start: ['תאריך התחלה', (x, y) => (x.start || '9999').localeCompare(y.start || '9999')] };
+  const counts = Object.fromEntries(['פעיל', 'מושהה', 'הסתיים'].map(st => [st, list.filter(c => c.status === st).length]));
+  let view = campFilter === 'all' ? list : list.filter(c => c.status === campFilter);
+  if (SORTS[campSort]?.[1]) view = [...view].sort(SORTS[campSort][1]);
+  const manual = campSort === 'manual' && campFilter === 'all';
+  const tot = list.reduce((m, c) => { const s = stats(c); m.budget += c.budget || 0; m.spent += c.spent || 0; m.leads += s.leads; return m; }, { budget: 0, spent: 0, leads: 0 });
+  const tools = `<div class="camp-tools">
+    <div class="kpis"><div class="kpi"><b>${counts['פעיל']}</b>פעילים</div><div class="kpi"><b>${money(tot.budget)}</b>תקציב כולל</div><div class="kpi"><b>${money(tot.spent)}</b>הוצאה</div><div class="kpi"><b>${tot.leads}</b>לידים</div></div>
+    <div class="camp-bar"><div class="chips" role="group" aria-label="סינון לפי סטטוס">${[['all', `הכול (${list.length})`], ['פעיל', `🟢 פעיל (${counts['פעיל']})`], ['מושהה', `⏸ מושהה (${counts['מושהה']})`], ['הסתיים', `✅ הסתיים (${counts['הסתיים']})`]].map(([v, t]) => `<label class="chip"><input type="radio" name="camp-filter" value="${v}" ${campFilter === v ? 'checked' : ''}><span>${t}</span></label>`).join('')}</div>
+    <label class="camp-sort">מיון <select id="camp-sort">${Object.entries(SORTS).map(([k, [t]]) => `<option value="${k}" ${campSort === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div>
+    ${manual ? '' : '<p class="meta">גרירה ושינוי סדר זמינים בסינון "הכול" ובמיון "סדר ידני".</p>'}</div>`;
+  $('#campaign-list').innerHTML = tools + (view.map((c, i) => {
+    const s = stats(c), pct = c.budget ? Math.min(100, c.spent / c.budget * 100) : 0, posts = db.posts.filter(p => p.campaign === c.id), next = posts.filter(p => p.date && ['מתוזמן', 'טיוטה'].includes(p.status)).map(p => p.date).sort()[0];
     return `<article class="item" data-id="${c.id}">
-      <div class="khead"><span class="handle" role="button" tabindex="0" aria-label="גרירה: ${esc(c.name)}" title="גררו כדי לשנות סדר">⠿</span>
+      <div class="khead">${manual ? `<span class="handle" role="button" tabindex="0" aria-label="גרירה: ${esc(c.name)}" title="גררו כדי לשנות סדר">⠿</span>` : ''}
         <h3>${esc(c.name)} <span class="tag">${esc(c.status)}</span></h3>
-        <span class="movers"><button data-act="camp-move" data-id="${c.id}" data-dir="-1" aria-label="הזזה למעלה" ${i === 0 ? 'disabled' : ''}>▲</button><button data-act="camp-move" data-id="${c.id}" data-dir="1" aria-label="הזזה למטה" ${i === list.length - 1 ? 'disabled' : ''}>▼</button></span></div>
-      <div class="meta">יעד: ${esc(c.goal)} · ${esc(c.start || '?')} – ${esc(c.end || '?')}</div>
+        ${manual ? `<span class="movers"><button data-act="camp-move" data-id="${c.id}" data-dir="-1" aria-label="הזזה למעלה" ${i === 0 ? 'disabled' : ''}>▲</button><button data-act="camp-move" data-id="${c.id}" data-dir="1" aria-label="הזזה למטה" ${i === view.length - 1 ? 'disabled' : ''}>▼</button></span>` : ''}</div>
+      <div class="meta">יעד: ${esc(c.goal)} · ${esc(c.start || '?')} – ${esc(c.end || '?')} · ${posts.length} פוסטים${next ? ` · הבא ב-${esc(next)}` : ''}</div>
       <div>${(c.channels || []).map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
-      ${c.audience ? `<div>קהל: ${esc(c.audience)}</div>` : ''}${c.message ? `<div>מסר: ${esc(c.message)}</div>` : ''}
       <div class="meta">תקציב ${money(c.budget)} · הוצאה ${money(c.spent)} · לידים ${s.leads}${c.target ? '/' + c.target : ''}${c.clicks ? ` · קליקים ${c.clicks} · חשיפות ${c.impressions}` : ''}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
       <div class="acts">
         <button data-act="edit-campaign" data-id="${c.id}">✎ עריכה</button>
         <button data-act="ai-plan" data-id="${c.id}">✨ תכנון תוכן אוטומטי</button>
-        <button data-act="copy-link" data-id="${c.id}">🔗 קישור מעקב</button>
-        <button data-act="copy-link" data-id="${c.id}" data-v="A" title="בדיקת A/B: השתמשו בקישור A בפוסטים אחד, ובקישור B באחרים">🧪 A</button>
-        <button data-act="copy-link" data-id="${c.id}" data-v="B">🧪 B</button>
-        <button data-act="fb-campaign" data-id="${c.id}">${c.fbCampaign ? '🔌 מחובר לקידום' : '🔌 חיבור לקידום ממומן'}</button>
         <button data-act="spend" data-id="${c.id}">עדכון הוצאה</button>
         ${statusBtns(c)}
-        <button class="danger" data-act="del-campaign" data-id="${c.id}">מחיקה</button>
-      </div></article>`;
-  }).join('') || '<p class="meta">אין קמפיינים עדיין. לחצו "קמפיין חדש".</p>';
+      </div>
+      <details class="more"><summary>עוד: מסר, קישורי מעקב, קידום וניהול</summary>
+        ${c.audience ? `<div>קהל: ${esc(c.audience)}</div>` : ''}${c.message ? `<div>מסר: ${esc(c.message)}</div>` : ''}
+        <div class="acts">
+          <button data-act="copy-link" data-id="${c.id}">🔗 קישור מעקב</button>
+          <button data-act="copy-link" data-id="${c.id}" data-v="A" title="בדיקת A/B: השתמשו בקישור A בפוסטים אחד, ובקישור B באחרים">🧪 A</button>
+          <button data-act="copy-link" data-id="${c.id}" data-v="B">🧪 B</button>
+          <button data-act="fb-campaign" data-id="${c.id}">${c.fbCampaign ? '🔌 מחובר לקידום' : '🔌 חיבור לקידום ממומן'}</button>
+          <button class="danger" data-act="del-campaign" data-id="${c.id}">מחיקה</button>
+        </div></details></article>`;
+  }).join('') || `<p class="meta">${list.length ? 'אין קמפיינים בסינון הזה.' : 'אין קמפיינים עדיין. לחצו "קמפיין חדש".'}</p>`);
 }
 
 const today = () => new Date().toLocaleDateString('sv'); // local date, YYYY-MM-DD
@@ -714,3 +731,8 @@ document.addEventListener('submit', () => { formDirty = false; }, true);
 document.addEventListener('reset', () => { formDirty = false; });
 const busyEditing = () => formDirty || !!document.querySelector('dialog[open]') || !!document.activeElement?.closest('main input, main textarea, main select');
 setInterval(() => { if ($('#login').hidden && !document.hidden && !busyEditing()) refresh().catch(() => {}); }, 30000);
+
+document.addEventListener('change', e => {
+  if (e.target.name === 'camp-filter') { campFilter = e.target.value; try { localStorage.setItem('tz-campfilter', campFilter); } catch {} renderCampaigns(); }
+  else if (e.target.id === 'camp-sort') { campSort = e.target.value; try { localStorage.setItem('tz-campsort', campSort); } catch {} renderCampaigns(); }
+});
