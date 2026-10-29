@@ -129,7 +129,7 @@ const EVENT_TEXT = {
   'post.published': e => `פורסם פוסט ב-${e.channel}: "${e.label}"`, 'post.blocked': e => `פוסט נעצר בבדיקת תאימות: "${e.label}"`, 'post.failed': e => `פרסום נכשל ב-${e.channel}: "${e.label}"`,
   'leads.create': e => `נוסף ליד "${e.label}"`, 'leads.update': e => `עודכן ליד "${e.label}" (${(e.fields || []).join(', ')})`, 'leads.delete': e => `נמחק ליד "${e.label}"`, 'leads.contacted': e => `נרשמה שיחה עם "${e.label}"`, 'lead.website': e => `ליד חדש מהאתר: "${e.label}"`,
   'settings.update': e => `עודכנו הגדרות (${(e.fields || []).join(', ')})`, 'media.create': () => 'הועלתה תמונה או באנר', 'plan.tick': e => `${e.done ? 'סומנה' : 'בוטלה'} משימה בתוכנית העבודה (${e.label})`,
-  'workspace.create': e => `נוצרה סביבת עבודה "${e.label}"`, 'access.update': e => `עודכנו הרשאות של ${e.label}`, 'user.create': e => `נוסף איש צוות ${e.label}`, 'user.role': e => `שונה תפקיד של ${e.label} ל${e.role === 'admin' ? 'מנהל' : 'חבר צוות'}`,
+  'workspace.create': e => `נוצרה סביבת עבודה "${e.label}"`, 'access.update': e => `עודכנו הרשאות של ${e.label}`, 'user.create': e => `נוסף איש צוות ${e.label}`, 'user.remove': e => `הוסר איש צוות ${e.label}`, 'user.password': e => `אופסה סיסמה של ${e.label}`, 'user.role': e => `שונה תפקיד של ${e.label} ל${e.role === 'admin' ? 'מנהל' : 'חבר צוות'}`,
   'patients.create': () => 'נוסף מטופל', 'patients.update': () => 'עודכנו פרטי מטופל', 'patients.delete': () => 'נמחק מטופל וכל הנתונים שלו', 'care.entry': e => `נרשמה רשומת ליווי (${e.kind})`, 'care.link': e => (e.revoked ? 'בוטל קישור ליווי למטופל' : 'נוצר קישור ליווי למטופל'), 'care.patient': e => `מטופל שלח ${e.kind === 'question' ? 'שאלה' : 'עדכון'}`,
   'ideas.create': e => `נוספה הצעת יעול: "${e.label}"`, 'ideas.status': e => `הצעת יעול "${e.label}" עברה ל-${e.status}`, 'ideas.delete': e => `נמחקה הצעת יעול "${e.label}"`,
   'knowledge.add': e => `נרשם ${e.kind === 'need' ? 'צורך' : e.kind === 'decision' ? 'החלטה' : 'הערה'}: "${e.label}"`, 'academy.lesson': e => `הושלם שיעור "${e.label}" (${e.score}%)`
@@ -329,7 +329,7 @@ function cleanDraft(d, channels, days) {
 
 /**
  * store: {
- *   userCount(), getUser(email), listUsers(), addUser(email,name,hash,role) // throws {code:'EXISTS'}, setRole(email,role)
+ *   userCount(), getUser(email), listUsers(), addUser(email,name,hash,role) // throws {code:'EXISTS'}, setRole(email,role), setHash(email,hash), delUser(email)
  *   createSession(tokenHash,email,exp), getSession(tokenHash), delSession(tokenHash)
  *   list(kind), get(kind,id), put(kind,id,obj), del(kind,id)
  *   claim(kind,id,fromStatus,toStatus) -> bool   // atomic status change, prevents double publishing
@@ -818,6 +818,15 @@ ${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
       }
     }
 
+    if (parts[0] === 'password' && method === 'POST') {
+      if (limited('pw:' + user.email, 8, 3600e3)) throw httpErr(429, 'יותר מדי ניסיונות, נסו שוב מאוחר יותר');
+      const { current = '', password = '' } = await readBody(req), me_ = await store.getUser(user.email);
+      if (!me_ || !checkPw(String(current), me_.hash)) throw httpErr(400, 'הסיסמה הנוכחית שגויה');
+      if (String(password).length < 8) throw httpErr(400, 'סיסמה חדשה של 8 תווים לפחות');
+      await store.setHash(user.email, hashPw(String(password)));
+      return send(res, 200, { ok: true });
+    }
+
     if (parts[0] === 'users') {
       if (user.role !== 'admin') throw httpErr(403, 'למנהלים בלבד');
       if (method === 'GET') return send(res, 200, await store.listUsers());
@@ -833,9 +842,24 @@ ${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
         }
         return send(res, 201, { ok: true });
       }
-      if (method === 'PUT') {
-        const { email, role } = await readBody(req), target = await store.getUser(String(email || '').toLowerCase());
+      if (method === 'DELETE') {
+        const target = await store.getUser(decodeURIComponent(parts[1] || '').toLowerCase());
         if (!target) throw httpErr(404, 'המשתמש לא נמצא');
+        if (target.email === user.email) throw httpErr(400, 'אי אפשר להסיר את עצמך');
+        if (target.role === 'admin' && (await store.listUsers()).filter(u => u.role === 'admin').length < 2) throw httpErr(400, 'חייב להישאר לפחות מנהל אחד');
+        await store.delUser(target.email); await store.del('access', target.email);
+        await logEvent(store, user, 'user.remove', { label: target.email });
+        return send(res, 200, { ok: true });
+      }
+      if (method === 'PUT') {
+        const { email, role, password } = await readBody(req), target = await store.getUser(String(email || '').toLowerCase());
+        if (!target) throw httpErr(404, 'המשתמש לא נמצא');
+        if (password !== undefined) {
+          if (String(password).length < 8) throw httpErr(400, 'סיסמה של 8 תווים לפחות');
+          await store.setHash(target.email, hashPw(String(password)));
+          await logEvent(store, user, 'user.password', { label: target.email });
+          return send(res, 200, { ok: true });
+        }
         if (!['admin', 'member'].includes(role)) throw httpErr(400, 'תפקיד לא תקין');
         if (target.email === user.email && role !== 'admin') throw httpErr(400, 'אי אפשר להוריד את התפקיד של עצמך. מנהל אחר יכול לעשות זאת');
         if (target.role === 'admin' && role !== 'admin' && (await store.listUsers()).filter(u => u.role === 'admin').length < 2) throw httpErr(400, 'חייב להישאר לפחות מנהל אחד');
