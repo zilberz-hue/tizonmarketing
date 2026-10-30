@@ -8,6 +8,19 @@ function inviteText(i) {
   return `שלום ${i.name || ''},\nנוצר לך משתמש במערכת השיווק של TizonHealth.\nכתובת: ${location.origin}/app/\nאימייל: ${i.email}\nסיסמה זמנית: ${i.password}\nמומלץ להחליף את הסיסמה בכניסה הראשונה (הכפתור 🔑 למעלה).`.replace(/\s+,/, ',');
 }
 
+function seenHtml(u) {
+  if (!u.lastSeen) return '<span class="meta">עדיין לא נכנס/ה</span>';
+  const mins = Math.max(0, Math.round((Date.now() - Date.parse(u.lastSeen)) / 60000));
+  if (mins <= 2) return '<span class="ok">🟢 מחובר/ת עכשיו</span>';
+  const ago = mins < 60 ? `לפני ${mins} דקות` : mins < 1440 ? `לפני ${Math.round(mins / 60)} שעות` : `לפני ${Math.round(mins / 1440)} ימים`;
+  return `<span class="meta">${ago}${u.lastLogin ? `<br>כניסה אחרונה: ${new Date(u.lastLogin).toLocaleDateString('he-IL', { day: 'numeric', month: 'short' })}` : ''}</span>`;
+}
+// keeps "connected now" fresh without re-rendering the tab (so nothing typed is lost)
+setInterval(async () => {
+  if (document.hidden || !$('#team.active') || me?.role !== 'admin') return;
+  try { for (const u of await api('GET', '/access')) { const c = document.querySelector(`[data-seen="${CSS.escape(u.email)}"]`); if (c) c.innerHTML = seenHtml(u); } } catch {}
+}, 30000);
+
 async function loadTeam() {
   const root = $('#team'); if (!root || me?.role !== 'admin') return;
   const [people, wss] = await Promise.all([api('GET', '/access'), api('GET', '/workspaces')]);
@@ -25,10 +38,11 @@ async function loadTeam() {
       <fieldset class="chips"><legend>לקוחות שאפשר לפתוח (לחבר צוות)</legend>${wss.map(w => `<label class="chip"><input type="checkbox" name="ws" value="${esc(w.id)}" ${w.id === 'main' ? 'checked' : ''}><span>${esc(w.name)}</span></label>`).join('')}</fieldset>
       <div class="err" id="team-err" role="alert" hidden></div>
       <button class="btn btn-sm" type="submit">הוספה</button></form>
-    <section class="panel"><h3>אנשי הצוות</h3><div style="overflow-x:auto"><table><tr><th>איש צוות</th><th>תפקיד</th><th>לקוחות</th><th></th></tr>
+    <section class="panel"><h3>אנשי הצוות</h3><div style="overflow-x:auto"><table><tr><th>איש צוות</th><th>תפקיד</th><th>לקוחות</th><th>נראה לאחרונה</th><th></th></tr>
       ${people.map(u => `<tr><td>${esc(u.name || u.email)}<div class="meta">${esc(u.email)}${u.email === me.email ? ' · אתם' : ''}</div></td>
         <td><select data-role="${esc(u.email)}" aria-label="תפקיד של ${esc(u.email)}"><option value="member" ${u.role !== 'admin' ? 'selected' : ''}>חבר צוות</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>מנהל</option></select></td>
         <td>${u.role === 'admin' ? '<span class="meta">כולם</span>' : wss.map(w => `<label class="chk"><input type="checkbox" data-access="${esc(u.email)}" value="${esc(w.id)}" ${(u.workspaces || []).includes(w.id) ? 'checked' : ''}> ${esc(w.name)}</label>`).join('')}</td>
+        <td data-seen="${esc(u.email)}">${seenHtml(u)}</td>
         <td class="acts"><button type="button" data-team-reset="${esc(u.email)}" data-name="${esc(u.name || '')}">איפוס סיסמה</button>${u.email === me.email ? '' : `<button type="button" class="danger" data-team-del="${esc(u.email)}">הסרה</button>`}</td></tr>`).join('')}</table></div></section>`;
 }
 
