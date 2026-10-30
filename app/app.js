@@ -539,7 +539,7 @@ function render() {
   [$('#post-campaign'), $('#lead-campaign')].forEach(s => { const v = s.value; s.innerHTML = opts; s.value = v; });
   $('#ai-text').hidden = !caps.ai;
   $('#tab-settings').hidden = me?.role !== 'admin';
-  $('#tab-team').hidden = me?.role !== 'admin';
+  $('#tab-team').hidden = me?.role !== 'admin'; $('#nav-admin').hidden = me?.role !== 'admin';
   $('#insights-ai').hidden = !caps.ai;
   if (!window.__dragging) renderCampaigns();
   renderPosts(); renderLeads(); renderReports(); renderDash();
