@@ -192,3 +192,5 @@ input[dir=ltr],textarea[dir=ltr]{text-align:left}
 .header .container{width:min(1360px,100% - 32px)}
 .io{flex-wrap:wrap;justify-content:flex-end;align-items:center}
 @media (max-width:820px){#whoami{display:none}.shell{width:calc(100% - 24px)}.app{min-width:0}}
+
+.eye2{inset-inline-end:44px}.pw:has(.eye2) input{padding-inline-end:84px}

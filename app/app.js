@@ -478,7 +478,7 @@ function fieldHtml(f) {
   const label = esc(f.label);
   if (f.type === 'select') return `<label>${label} <select name="${f.key}">${f.options.map(([v, l]) => `<option value="${esc(v)}" ${f.value === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
   if (f.type === 'textarea') return `<label>${label} <textarea name="${f.key}" rows="3" placeholder="${esc(f.placeholder || '')}">${esc(f.value || '')}</textarea></label>`;
-  if (f.secret) return `<label>${label}${src} <span class="pw"><input name="${f.key}" type="password" dir="ltr" autocomplete="off" placeholder="${f.set ? esc(f.hint) + ' מוגדר. להחלפה הקלידו חדש' : esc(f.placeholder || '')}">${f.set && f.source === 'settings' ? `<button type="button" class="eye" data-act="clear-secret" data-key="${f.key}" title="הסרה" aria-label="הסרת ${label}">✕</button>` : ''}</span></label>`;
+  if (f.secret) return `<label>${label}${src} <span class="pw"><input name="${f.key}" type="password" dir="ltr" autocomplete="off" data-hint="${f.set ? esc(f.hint) : ''}" placeholder="${f.set ? esc(f.hint) + ' מוגדר. להחלפה הקלידו חדש' : esc(f.placeholder || '')}">${f.set && f.source === 'settings' ? `<button type="button" class="eye eye2" data-act="clear-secret" data-key="${f.key}" title="הסרה" aria-label="הסרת ${label}">✕</button>` : ''}<button type="button" class="eye" data-reveal aria-pressed="false" title="הצגת המפתח" aria-label="הצגת המפתח"><svg class="i-show" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="i-hide" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.9 17.9A10.9 10.9 0 0 1 12 19C5 19 1 12 1 12a18.7 18.7 0 0 1 5.1-5.9M9.9 5.1A10.4 10.4 0 0 1 12 5c7 0 11 7 11 7a18.5 18.5 0 0 1-2.2 3.2M14.1 14.1a3 3 0 1 1-4.2-4.2M1 1l22 22"/></svg></button></span></label>`;
   return `<label>${label}${src} <input name="${f.key}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}" autocomplete="off"${LTR_KEYS.has(f.key) ? ' dir="ltr"' : ''}></label>`;
 }
 
@@ -740,4 +740,13 @@ setInterval(() => { if ($('#login').hidden && !document.hidden && !busyEditing()
 document.addEventListener('change', e => {
   if (e.target.name === 'camp-filter') { campFilter = e.target.value; try { localStorage.setItem('tz-campfilter', campFilter); } catch {} renderCampaigns(); }
   else if (e.target.id === 'camp-sort') { campSort = e.target.value; try { localStorage.setItem('tz-campsort', campSort); } catch {} renderCampaigns(); }
+});
+
+// 👁 reveal a key field. Saved keys are never sent back by the server (only their last characters), so the eye shows what was just typed or pasted.
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-reveal]'); if (!b) return;
+  const input = b.closest('.pw').querySelector('input'), show = input.type === 'password';
+  if (show && !input.value && input.dataset.hint) { toast(`הערך השמור לא נחשף מטעמי אבטחה. מוצג רק הסוף: ${input.dataset.hint}`); return; }
+  input.type = show ? 'text' : 'password'; b.setAttribute('aria-pressed', show);
+  b.setAttribute('aria-label', show ? 'הסתרת המפתח' : 'הצגת המפתח'); input.focus();
 });
