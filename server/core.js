@@ -1208,6 +1208,9 @@ ${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
       }
       if (id && method === 'DELETE') {
         const cur = await store.get(kind, id);
+        if (kind === 'campaigns' && url.searchParams.get('posts') === '1') { // one request instead of one per post (slow, and easy to double-trigger)
+          await Promise.all((await store.list('posts')).filter(p => p.campaign === id && p.status !== 'פורסם').map(p => store.del('posts', p.id)));
+        }
         await store.del(kind, id);
         await logEvent(store, user, `${kind}.delete`, { id, label: labelOf(cur) });
         if (cur?.image && !(await store.list('posts')).some(p => p.image === cur.image)) await base.del('media', cur.image);

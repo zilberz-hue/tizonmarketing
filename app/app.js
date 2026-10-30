@@ -6,6 +6,7 @@ const money = n => '₪' + Math.round(n || 0).toLocaleString('he-IL');
 let db = { campaigns: [], posts: [], leads: [], checklist: {} };
 let me = null, caps = {}, workspaces = [], currentWs = 'main';
 const camp = id => db.campaigns.find(c => c.id === id);
+const deleting = new Set(); // campaign ids being deleted right now
 const campName = id => camp(id)?.name || 'ללא קמפיין';
 
 let formDirty = false; // set while a form has unsaved input (see the auto-refresh below)
@@ -228,11 +229,14 @@ document.addEventListener('click', safe(async e => {
   if (act === 'copy-link') { navigator.clipboard?.writeText(`${location.origin}/?c=${id}${b.dataset.v ? '&v=' + b.dataset.v : ''}`); toast('הקישור הועתק. לידים שיגיעו דרכו ישויכו לקמפיין'); return; }
   if (act === 'copy') { navigator.clipboard?.writeText(db.posts.find(p => p.id === id).text); b.textContent = 'הועתק ✓'; return; }
   if (act === 'del-campaign') {
+    if (deleting.has(id)) return; // a second click while the first is still running must not start another delete
     const c = camp(id), open = db.posts.filter(p => p.campaign === id && p.status !== 'פורסם');
     if (!confirm(`למחוק את הקמפיין "${c?.name || ''}"? אי אפשר לשחזר.`)) return;
     const withPosts = open.length && confirm(`יש ${open.length} פוסטים שטרם פורסמו בקמפיין הזה.\nאישור: למחוק גם אותם.\nביטול: הם יישארו בלוח התוכן בלי קמפיין.`);
-    if (withPosts) for (const p of open) await api('DELETE', '/posts/' + p.id);
-    await api('DELETE', '/campaigns/' + id);
+    deleting.add(id); b.disabled = true; b.textContent = 'מוחק…';
+    db.campaigns = db.campaigns.filter(x => x.id !== id); if (withPosts) db.posts = db.posts.filter(p => !open.includes(p)); render(); // show it gone at once
+    try { await api('DELETE', '/campaigns/' + id + (withPosts ? '?posts=1' : '')); toast('הקמפיין נמחק'); }
+    finally { deleting.delete(id); }
   }
   else if (act === 'spend') { const c = camp(id), v = prompt('כמה הוצאתם עד כה (₪)?', c.spent); if (v === null || isNaN(+v)) return; await api('PUT', '/campaigns/' + id, { spent: +v }); }
   else if (act === 'set-status') await api('PUT', '/campaigns/' + id, { status: b.dataset.status });

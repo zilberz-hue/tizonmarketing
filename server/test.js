@@ -655,6 +655,18 @@ assert.ok(!ck.s1 && ck['k1@2026-10-04']);
   assert.equal((await call('DELETE', '/api/users/nobody%40x.co')).status, 404);
 }
 
+// deleting a campaign together with its unpublished posts is a single request; published posts stay
+{
+  const c = (await call('POST', '/api/campaigns', { name: 'למחיקה עם פוסטים', goal: 'לידים' })).data;
+  const mk = async status => (await call('POST', '/api/posts', { campaign: c.id, channel: 'Facebook', text: 'x ' + status, at: new Date(Date.now() + 864e5).toISOString(), status })).data;
+  const draft = await mk('טיוטה'), done = await mk('פורסם');
+  assert.equal((await call('DELETE', `/api/campaigns/${c.id}?posts=1`)).status, 200);
+  const st = (await call('GET', '/api/state')).data;
+  assert.ok(!st.campaigns.some(x => x.id === c.id) && !st.posts.some(p => p.id === draft.id), 'campaign and its unpublished posts are gone');
+  assert.ok(st.posts.some(p => p.id === done.id), 'published history stays');
+  await call('DELETE', '/api/posts/' + done.id);
+}
+
 const del = await call('DELETE', '/api/posts/' + p.id);
 assert.equal(del.status, 200);
 console.log('all tests passed');
