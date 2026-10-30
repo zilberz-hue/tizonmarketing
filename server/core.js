@@ -62,6 +62,7 @@ function clientIp(req) {
 
 // --- rate limit (per instance; best-effort on serverless) ---
 const hits = new Map();
+const seenAt = new Map(); // email -> last presence write (ms), to avoid a database write on every request
 function limited(key, max, windowMs) {
   const now = Date.now(), arr = (hits.get(key) || []).filter(t => now - t < windowMs);
   arr.push(now); hits.set(key, arr);
@@ -764,6 +765,7 @@ ${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
       if (!u || !checkPw(String(password), u.hash)) throw httpErr(401, 'אימייל או סיסמה שגויים');
       const token = crypto.randomBytes(32).toString('hex');
       await store.createSession(sha(token), u.email, Date.now() + 14 * 864e5);
+      const nowIso = new Date().toISOString(); await base.put('presence', u.email, { at: nowIso, login: nowIso }).catch(() => {}); seenAt.set(u.email, Date.now());
       return send(res, 200, { token, email: u.email, name: u.name, role: u.role });
     }
 
@@ -805,7 +807,7 @@ ${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
       if (user.role !== 'admin') throw httpErr(403, 'למנהלים בלבד');
       if (method === 'GET') {
         const users = await store.listUsers();
-        return send(res, 200, await Promise.all(users.map(async u => ({ ...u, workspaces: u.role === 'admin' ? ['*'] : (await store.get('access', u.email))?.workspaces || ['main'] }))));
+        return send(res, 200, await Promise.all(users.map(async u => { const pr = await base.get('presence', u.email); return { ...u, workspaces: u.role === 'admin' ? ['*'] : (await store.get('access', u.email))?.workspaces || ['main'], lastSeen: pr?.at || '', lastLogin: pr?.login || '' }; })));
       }
       if (method === 'PUT') {
         const { email, workspaces } = await readBody(req);
@@ -1219,6 +1221,10 @@ ${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
     try {
       await ensureAdmin();
       const user = await sessionUser(req); // null for public and login endpoints
+      if (user && Date.now() - (seenAt.get(user.email) || 0) > 60e3) { // presence heartbeat, at most once a minute per person
+        seenAt.set(user.email, Date.now());
+        base.get('presence', user.email).then(pr => base.put('presence', user.email, { ...(pr || {}), at: new Date().toISOString() })).catch(() => {});
+      }
       let ws = 'main';
       if (user) {
         const want = String(req.headers['x-workspace'] || 'main');
