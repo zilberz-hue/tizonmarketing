@@ -19,19 +19,6 @@
   <button class="btn btn-sm">כניסה</button></form></div>
 <header class="header"><div class="container nav">
   <a class="logo" href="../index.html"><img src="../assets/logo.webp" alt="TizonHealth" width="68" height="58"></a>
-  <nav id="tabs">
-    <button data-tab="dash" class="active">סקירה</button>
-    <button data-tab="plan">✅ תוכנית עבודה</button>
-    <button data-tab="academy" id="tab-academy">🎓 הדרכה <span class="dot" hidden></span></button>
-    <button data-tab="campaigns">קמפיינים</button>
-    <button data-tab="content">לוח תוכן</button>
-    <button data-tab="leads">לידים</button>
-    <button data-tab="care">🩺 מטופלים</button>
-    <button data-tab="ideas">💡 הצעות יעול</button>
-    <button data-tab="reports">דוחות</button>
-    <button data-tab="team" id="tab-team" hidden>👥 צוות</button>
-    <button data-tab="settings" id="tab-settings" hidden>⚙️ הגדרות</button>
-  </nav>
   <div class="io">
     <span id="whoami" class="meta" title="המשתמש המחובר"></span>
     <select id="ws-switch" aria-label="סביבת עבודה" hidden></select>
@@ -42,7 +29,25 @@
   </div>
 </div></header>
 
-<main class="container app">
+<div class="shell">
+<nav id="tabs" aria-label="תפריט ראשי">
+  <div class="nav-group">התחלה</div>
+  <button data-tab="academy" id="tab-academy">🎓 הדרכה <span class="dot" hidden></span></button>
+  <button data-tab="dash" class="active">🏠 סקירה</button>
+  <button data-tab="plan">✅ תוכנית עבודה</button>
+  <div class="nav-group">שיווק</div>
+  <button data-tab="campaigns">📣 קמפיינים</button>
+  <button data-tab="content">🗓️ לוח תוכן</button>
+  <button data-tab="leads">📞 לידים</button>
+  <button data-tab="reports">📊 דוחות</button>
+  <div class="nav-group">ליווי ושיפור</div>
+  <button data-tab="care">🩺 מטופלים</button>
+  <button data-tab="ideas">💡 הצעות יעול</button>
+  <div class="nav-group" id="nav-admin" hidden>ניהול</div>
+  <button data-tab="team" id="tab-team" hidden>👥 צוות</button>
+  <button data-tab="settings" id="tab-settings" hidden>⚙️ הגדרות</button>
+</nav>
+<main class="app">
   <section id="dash" class="tab active"></section>
 
   <section id="plan" class="tab"></section>
@@ -131,6 +136,7 @@
   <section id="team" class="tab"></section>
   <section id="settings" class="tab"></section>
 </main>
+</div>
 <dialog id="quick" class="quick" aria-labelledby="quick-title">
   <form method="dialog" class="x"><button aria-label="סגירה">✕</button></form>
   <div id="quick-body"></div>
