@@ -485,7 +485,7 @@ function fieldHtml(f) {
 function renderSettings() {
   const root = $('#settings');
   const open = [...root.querySelectorAll('details[open]')].map(d => d.closest('form').dataset.group);
-  root.innerHTML = `<div class="bar"><h2>הגדרות וחיבורים</h2></div>
+  root.innerHTML = `<div class="bar"><h2>הגדרות וחיבורים</h2><button type="button" class="btn btn-sm btn-ghost" id="setup-open">📋 צ'קליסט הקמה</button></div>
     <p class="meta">כאן מכניסים את כל המפתחות והחיבורים, במקום אחד. הם נשמרים בשרת, משותפים לכל הצוות, ולא מוצגים שוב אחרי השמירה.${settingsState.encrypted ? ' מוצפנים בהצפנה.' : ''}</p>` +
     settingsState.groups.map(g => `<form class="panel set-group" data-group="${g.id}">
       <div class="bar"><h3>${g.title}</h3><span class="badge ${g.connected ? 'auto' : ''}">${g.connected ? '✅ מחובר' : (g.test ? '⚪ לא מחובר' : '')}</span></div>
