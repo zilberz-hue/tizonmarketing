@@ -623,6 +623,7 @@ function renderCampaigns() {
         <button data-act="ai-plan" data-id="${c.id}">✨ תכנון תוכן אוטומטי</button>
         <button data-act="spend" data-id="${c.id}">עדכון הוצאה</button>
         ${statusBtns(c)}
+        <button class="danger" data-act="del-campaign" data-id="${c.id}">🗑 מחיקה</button>
       </div>
       <details class="more"><summary>עוד: מסר, קישורי מעקב, קידום וניהול</summary>
         ${c.audience ? `<div>קהל: ${esc(c.audience)}</div>` : ''}${c.message ? `<div>מסר: ${esc(c.message)}</div>` : ''}
@@ -631,7 +632,6 @@ function renderCampaigns() {
           <button data-act="copy-link" data-id="${c.id}" data-v="A" title="בדיקת A/B: השתמשו בקישור A בפוסטים אחד, ובקישור B באחרים">🧪 A</button>
           <button data-act="copy-link" data-id="${c.id}" data-v="B">🧪 B</button>
           <button data-act="fb-campaign" data-id="${c.id}">${c.fbCampaign ? '🔌 מחובר לקידום' : '🔌 חיבור לקידום ממומן'}</button>
-          <button class="danger" data-act="del-campaign" data-id="${c.id}">מחיקה</button>
         </div></details></article>`;
   }).join('') || `<p class="meta">${list.length ? 'אין קמפיינים בסינון הזה.' : 'אין קמפיינים עדיין. לחצו "קמפיין חדש".'}</p>`);
 }
