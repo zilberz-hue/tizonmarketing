@@ -227,7 +227,13 @@ document.addEventListener('click', safe(async e => {
   if (act === 'clear-secret') { if (!confirm('להסיר את הערך השמור?')) return; await api('PUT', '/settings', { clear: [b.dataset.key] }); await loadSettings(); await refresh(); return; }
   if (act === 'copy-link') { navigator.clipboard?.writeText(`${location.origin}/?c=${id}${b.dataset.v ? '&v=' + b.dataset.v : ''}`); toast('הקישור הועתק. לידים שיגיעו דרכו ישויכו לקמפיין'); return; }
   if (act === 'copy') { navigator.clipboard?.writeText(db.posts.find(p => p.id === id).text); b.textContent = 'הועתק ✓'; return; }
-  if (act === 'del-campaign' && confirm('למחוק את הקמפיין?')) await api('DELETE', '/campaigns/' + id);
+  if (act === 'del-campaign') {
+    const c = camp(id), open = db.posts.filter(p => p.campaign === id && p.status !== 'פורסם');
+    if (!confirm(`למחוק את הקמפיין "${c?.name || ''}"? אי אפשר לשחזר.`)) return;
+    const withPosts = open.length && confirm(`יש ${open.length} פוסטים שטרם פורסמו בקמפיין הזה.\nאישור: למחוק גם אותם.\nביטול: הם יישארו בלוח התוכן בלי קמפיין.`);
+    if (withPosts) for (const p of open) await api('DELETE', '/posts/' + p.id);
+    await api('DELETE', '/campaigns/' + id);
+  }
   else if (act === 'spend') { const c = camp(id), v = prompt('כמה הוצאתם עד כה (₪)?', c.spent); if (v === null || isNaN(+v)) return; await api('PUT', '/campaigns/' + id, { spent: +v }); }
   else if (act === 'set-status') await api('PUT', '/campaigns/' + id, { status: b.dataset.status });
   else if (act === 'camp-move') {
@@ -585,7 +591,7 @@ function renderCampaigns() {
         return `<article class="kcard" data-id="${c.id}"><div class="khead"><span class="handle" role="button" tabindex="0" aria-label="גרירה: ${esc(c.name)}" title="גררו">⠿</span><b>${esc(c.name)}</b></div>
           <div class="meta">${esc(c.goal)} · לידים ${s.leads}${c.target ? '/' + c.target : ''} · ${money(c.spent)}</div>
           <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
-          <div class="acts"><button data-act="edit-campaign" data-id="${c.id}">✎ עריכה</button><button data-act="copy-link" data-id="${c.id}">🔗</button><button data-act="spend" data-id="${c.id}">הוצאה</button>${statusBtns(c)}</div></article>`; }).join('') || '<p class="meta empty-col">גררו לכאן</p>'}</section>`;
+          <div class="acts"><button data-act="edit-campaign" data-id="${c.id}">✎ עריכה</button><button data-act="copy-link" data-id="${c.id}">🔗</button><button data-act="spend" data-id="${c.id}">הוצאה</button>${statusBtns(c)}<button class="danger" data-act="del-campaign" data-id="${c.id}">מחיקה</button></div></article>`; }).join('') || '<p class="meta empty-col">גררו לכאן</p>'}</section>`;
     }).join('');
     return;
   }
