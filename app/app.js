@@ -120,6 +120,7 @@ async function refresh() {
   me = s.me; caps = s.caps; workspaces = s.workspaces || []; currentWs = s.ws || 'main';
   db = { checklist: s.checklist || {}, campaigns: s.campaigns, leads: s.leads, posts: s.posts.map(p => ({ ...p, date: localDate(p.at), time: localTime(p.at) })) };
   $('#login').hidden = true;
+  $('#whoami').textContent = me?.name || me?.email || '';
   render();
 }
 function showLogin() { $('#login').hidden = false; }
@@ -132,13 +133,17 @@ $('#toggle-pw').onclick = e => {
   input.focus();
 };
 
-$('#login-form').addEventListener('submit', safe(async e => {
-  e.preventDefault();
-  const f = Object.fromEntries(new FormData(e.target));
-  setToken((await api('POST', '/login', f)).token);
-  e.target.reset();
-  await refresh();
-}));
+let loggingIn = false;
+$('#login-form').addEventListener('submit', async e => {
+  e.preventDefault(); if (loggingIn) return; // a second Enter or click must not send a second (empty) request
+  const f = Object.fromEntries(new FormData(e.target)), err = $('#login-err'), btn = e.target.querySelector('button:not(.eye)');
+  if (!f.email || !f.password) return;
+  loggingIn = true; btn.disabled = true; err.hidden = true;
+  try { setToken((await api('POST', '/login', { email: String(f.email).trim(), password: f.password })).token); e.target.reset(); await refresh(); }
+  catch (ex) { if (ex.message !== 'auth') { err.textContent = ex.message; err.hidden = false; } }
+  finally { loggingIn = false; btn.disabled = false; }
+});
+if (getToken()) $('#login').hidden = true; // a saved session: don't flash (or accept input into) the login screen while loading
 $('#logout').onclick = safe(async () => { await api('POST', '/logout').catch(() => {}); setToken(''); location.reload(); });
 
 $('#tabs').addEventListener('click', e => {
