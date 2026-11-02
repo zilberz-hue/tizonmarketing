@@ -35,6 +35,7 @@ const mock2 = http.createServer((req, res) => {
       const prompt = body.messages?.[0]?.content || '';
       const text = prompt.includes('ספר פעולה חי') ? '# ספר הפעולה שלנו\n## איך אנחנו עובדים\nעובדים לפי תוכנית שבועית, מפרסמים בפייסבוק ובטלגרם, ומודדים כל שבוע את עלות הליד. ## מה כדאי לעשות עכשיו: להמשיך.'
         : prompt.includes('המדריך של מערכת השיווק') ? 'לחצו על הסטודיו ובחרו גודל. [[lesson:banner-studio]]'
+        : prompt.includes('קרוסלה של') ? JSON.stringify([{ headline: 'מתלבטים מאיפה להתחיל?', sub: '', cta: '' }, { headline: 'שיחת היכרות', sub: 'מבינים את המצב', cta: '' }, { headline: 'המוצר מרפא הכול', sub: '', cta: 'צרו קשר' }])
         : prompt.includes('כותרות לבאנר') ? JSON.stringify([{ headline: 'כותרת א', sub: 'שורה א', cta: 'התקשרו' }, { headline: 'המוצר מרפא', sub: '', cta: 'עכשיו' }, { headline: 'כותרת ג', sub: '', cta: '' }])
         : prompt.includes('Write ONE short English prompt') ? 'calm wellness background, soft light'
         : prompt.includes('ההנחיה של המשתמש') ? (prompt.includes('כתוב שזה מרפא') ? 'המוצר מרפא הכול' : 'טקסט משודרג')
@@ -292,6 +293,29 @@ assert.equal(leadsNow.find(l => l.name === 'זר').campaign, '');
   let ps = await postsNow();
   assert.equal(ps.find(p => p.id === fbImg.id).ref, 'PAGE_123'); assert.equal(ps.find(p => p.id === fbTxt.id).ref, 'PAGE_555');
 
+  // carousel: several images on one post. Facebook gets one feed post with all photos attached, the webhook gets every URL
+  const upAgain = async () => (await call('POST', '/api/media', { dataUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==' })).data.id;
+  const slides = [up.data.id, await upAgain(), await upAgain()];
+  const car = (await call('POST', '/api/posts', { channel: 'Facebook', text: 'קרוסלה בפייסבוק', images: [...slides, 'not-an-id'], at: due() })).data;
+  assert.deepEqual(car.images, slides, 'invalid ids are dropped'); assert.equal(car.image, slides[0], 'the cover is the first slide');
+  const carIg = (await call('POST', '/api/posts', { channel: 'Instagram', text: 'קרוסלה באינסטגרם', images: slides, at: due() })).data;
+  assert.equal((await call('PUT', '/api/posts/' + carIg.id, { image: slides[1] })).data.images.length, 0, 'replacing the image turns it back into a single image');
+  await call('PUT', '/api/posts/' + carIg.id, { images: slides });
+  mock2log.length = 0; await tick();
+  assert.equal(mock2log.filter(r => r.path.includes('/fb/1234567890/photos')).length, 3, 'each slide is uploaded');
+  assert.ok(mock2log.filter(r => r.path.includes('/fb/1234567890/photos')).every(r => r.body.raw.includes('published')), 'unpublished photos');
+  const feed = mock2log.find(r => r.path.includes('/fb/1234567890/feed') && r.body.message === 'קרוסלה בפייסבוק');
+  assert.equal(feed.body.attached_media.length, 3); assert.equal(feed.body.attached_media[0].media_fbid, 'img1');
+  const igHook = mock2log.find(r => r.path === '/hook2' && r.body.text === 'קרוסלה באינסטגרם');
+  assert.equal(igHook.body.image_urls.length, 3); assert.equal(igHook.body.carousel, true); assert.match(igHook.body.image_url, new RegExp(slides[0] + '$'));
+  assert.deepEqual((await call('POST', '/api/ai/carousel', {})).status, 400);
+  await call('PUT', '/api/settings', { values: { TG_BOT_TOKEN: '333:CCC', TG_CHAT_ID: '@album_channel' } });
+  await call('POST', '/api/posts', { channel: 'Telegram', text: 'אלבום בטלגרם', images: slides, at: due() });
+  mock2log.length = 0; await tick();
+  const album = mock2log.find(r => r.path.includes('sendMediaGroup'));
+  assert.ok(album && album.body.multipart && album.body.raw.includes('attach://f2') && album.body.raw.includes('אלבום בטלגרם'), 'Telegram album with caption on the first photo');
+  await call('PUT', '/api/settings', { clear: ['TG_BOT_TOKEN', 'TG_CHAT_ID'] });
+
   // metrics: reactions/comments/shares for recent posts + ad spend per campaign
   const ac = (await call('POST', '/api/campaigns', { name: 'ממומן', fbCampaign: '99887766' })).data;
   const sync = (await call('POST', '/api/sync', {})).data;
@@ -389,6 +413,9 @@ assert.equal(leadsNow.find(l => l.name === 'זר').campaign, '');
   assert.equal(copy.status, 200); assert.equal(copy.data.options.length, 3);
   assert.equal(copy.data.options[0].headline, 'כותרת א'); assert.equal(copy.data.options[1].risk.level, 'high', 'risky banner copy is flagged');
   assert.equal((await call('POST', '/api/ai/banner-copy', {})).status, 400);
+  const car2 = (await call('POST', '/api/ai/carousel', { text: 'פוסט על ייעוץ בריאות', count: 3 })).data;
+  assert.equal(car2.slides.length, 3); assert.equal(car2.slides[2].cta, 'צרו קשר'); assert.ok(car2.slides[2].risk?.level, 'slides go through the compliance check');
+  assert.equal((await call('POST', '/api/ai/carousel', { text: '' })).status, 400);
   const ip = await call('POST', '/api/ai/image-prompt', { text: 'שיחת היכרות חינם' });
   assert.equal(ip.data.prompt, 'calm wellness background, soft light');
 

@@ -68,7 +68,7 @@ function startProgress({ label, est = 10000 }) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const AI_LABELS = {
   '/ai/quick-campaign': ['בונה את הקמפיין', 25000], '/ai/plan': ['מתכנן לוח תוכן', 25000], '/ai/improve': ['משדרג את הטקסט', 9000], '/ai/generate': ['כותב פוסט', 9000],
-  '/ai/banner-copy': ['מנסח כותרות לבאנר', 9000], '/ai/image-prompt': ['כותב תיאור לתמונה', 6000], '/ai/image': ['יוצר תמונה', 30000], '/compliance/fix': ['מתקן את הניסוח', 9000], '/insights': ['מנתח את הנתונים', 12000], '/guide/ask': ['המדריך מכין תשובה', 9000], '/guide/learn': ['מעדכן את ספר הידע', 15000]
+  '/ai/banner-copy': ['מנסח כותרות לבאנר', 9000], '/ai/carousel': ['בונה קרוסלה', 12000], '/ai/image-prompt': ['כותב תיאור לתמונה', 6000], '/ai/image': ['יוצר תמונה', 30000], '/compliance/fix': ['מתקן את הניסוח', 9000], '/insights': ['מנתח את הנתונים', 12000], '/guide/ask': ['המדריך מכין תשובה', 9000], '/guide/learn': ['מעדכן את ספר הידע', 15000]
 };
 async function aiCall(path, body) {
   const [label, est] = AI_LABELS[path] || ['מעבד', 10000];
@@ -170,16 +170,16 @@ $('#campaign-form').addEventListener('submit', safe(async e => {
 $('#post-form').addEventListener('submit', safe(async e => {
   e.preventDefault();
   const f = Object.fromEntries(new FormData(e.target));
-  await api('POST', '/posts', { campaign: f.campaign, channel: f.channel, text: f.text, image: f.image || '', at: new Date(f.date + 'T' + f.time).toISOString() });
+  await api('POST', '/posts', { campaign: f.campaign, channel: f.channel, text: f.text, image: f.image || '', ...(f.images ? { images: JSON.parse(f.images) } : {}), at: new Date(f.date + 'T' + f.time).toISOString() });
   $('#post-img-preview').innerHTML = ''; $('#post-risk').hidden = true;
   e.target.reset(); await refresh();
 }));
 $('#post-img').onclick = safe(async () => {
   const id = await pickImage(); if (!id) return;
-  $('#post-form [name=image]').value = id;
+  $('#post-form [name=image]').value = id; $('#post-form [name=images]').value = '';
   $('#post-img-preview').innerHTML = thumb(id) + ' <button type="button" class="link" id="post-img-clear">הסרה</button>';
 });
-$('#post-img-preview').addEventListener('click', e => { if (e.target.id === 'post-img-clear') { $('#post-form [name=image]').value = ''; $('#post-img-preview').innerHTML = ''; } });
+$('#post-img-preview').addEventListener('click', e => { if (e.target.id === 'post-img-clear') { $('#post-form [name=image]').value = ''; $('#post-form [name=images]').value = ''; $('#post-img-preview').innerHTML = ''; } });
 let riskTimer;
 $('#post-form [name=text]').addEventListener('input', e => {
   clearTimeout(riskTimer);
@@ -651,7 +651,7 @@ function renderPosts() {
       <div class="meta">${p.date ? esc(p.date) + ' ' + esc(p.time) : 'ללא תאריך'} · ${esc(campName(p.campaign))}</div>
       ${p.pillar || p.bucket || p.topic || p.assetType ? `<div>${[p.pillar, p.bucket, p.assetType].filter(Boolean).map(x => `<span class="tag">${esc(x)}</span>`).join('')}${p.topic ? `<b>${esc(p.topic)}</b>` : ''}</div>` : ''}
       ${p.assetLink || p.liveLink ? `<div class="meta">${p.assetLink ? `<a href="${esc(p.assetLink)}" target="_blank" rel="noopener noreferrer">📁 קובץ</a> ` : ''}${p.liveLink ? `<a href="${esc(p.liveLink)}" target="_blank" rel="noopener noreferrer">🔗 הפוסט החי</a>` : ''}</div>` : ''}
-      ${thumb(p.image)}
+      ${p.images?.length > 1 ? `<div class="thumbs">${p.images.map(thumb).join('')}<span class="tag">🎠 קרוסלה · ${p.images.length}</span></div>` : thumb(p.image)}
       <div style="white-space:pre-wrap">${esc(p.text)}</div>
       ${p.status !== 'פורסם' ? riskHtml(p.risk) : ''}
       ${p.metricsAt ? `<div class="meta">👍 ${p.likes || 0} · 💬 ${p.comments || 0} · ↗ ${p.shares || 0}${eng ? '' : ' (עדיין אין אינטראקציה)'}</div>` : ''}
