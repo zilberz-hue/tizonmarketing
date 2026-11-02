@@ -9,7 +9,7 @@ import { TRACKS, LESSONS, RELEASES, MANUAL, publicContent, searchLessons, manual
 
 const SCHEMA = {
   campaigns: { name: 's', goal: 's', audience: 's', channels: 'a', budget: 'n', target: 'n', start: 's', end: 's', message: 's', spent: 'n', status: 's', fbCampaign: 's', impressions: 'n', clicks: 'n', order: 'n' },
-  posts: { campaign: 's', channel: 's', at: 's', text: 's', status: 's', error: 's', publishedAt: 's', via: 's', attempts: 'n', override: 'n', image: 's', ref: 's', likes: 'n', comments: 'n', shares: 'n', metricsAt: 's', pillar: 's', bucket: 's', topic: 's', assetType: 's', assetLink: 's', liveLink: 's' },
+  posts: { campaign: 's', channel: 's', at: 's', text: 's', status: 's', error: 's', publishedAt: 's', via: 's', attempts: 'n', override: 'n', image: 's', ref: 's', likes: 'n', comments: 'n', shares: 'n', metricsAt: 's', pillar: 's', bucket: 's', topic: 's', assetType: 's', assetLink: 's', liveLink: 's', images: 'a' },
   leads: { name: 's', phone: 's', email: 's', campaign: 's', value: 'n', stage: 's', created: 's', note: 's', followedUp: 'n', variant: 's', next: 's', seq: 'n', remindedOn: 's' }
 };
 const uid = () => crypto.randomBytes(6).toString('hex');
@@ -245,10 +245,20 @@ async function testService(name) {
 }
 async function publish(post, campaign, loadMedia) {
   const c = connectors(), ch = post.channel;
-  const img = post.image ? await loadMedia(post.image) : null;
-  const blob = img ? new Blob([Buffer.from(img.data, 'base64')], { type: img.type }) : null;
+  const ids = (post.images || []).length > 1 ? post.images : post.image ? [post.image] : []; // 2+ images = a carousel / album
+  const imgs = (await Promise.all(ids.map(loadMedia))).filter(Boolean);
+  const blobs = imgs.map(m => new Blob([Buffer.from(m.data, 'base64')], { type: m.type })), blob = blobs[0] || null;
   if (ch === 'Facebook' && c.facebook) {
     const page = encodeURIComponent(env('FB_PAGE_ID'));
+    if (blobs.length > 1) { // multi-photo post: upload unpublished photos, then attach them all to one feed post
+      const media = [];
+      for (const b of blobs) {
+        const fd = new FormData(); fd.append('source', b, 'image'); fd.append('published', 'false'); fd.append('access_token', env('FB_PAGE_TOKEN'));
+        const r = await postForm(`${fbApi()}/${page}/photos`, fd); media.push({ media_fbid: r.id });
+      }
+      const r = await postJson(`${fbApi()}/${page}/feed`, { message: post.text, attached_media: media, access_token: env('FB_PAGE_TOKEN') });
+      return { via: 'facebook', ref: r.id || '' };
+    }
     if (blob) {
       const fd = new FormData();
       fd.append('source', blob, 'image'); fd.append('caption', post.text); fd.append('access_token', env('FB_PAGE_TOKEN'));
@@ -259,8 +269,17 @@ async function publish(post, campaign, loadMedia) {
     return { via: 'facebook', ref: r.id || '' };
   }
   if (ch === 'Telegram' && c.telegram) {
+    const short = post.text.length <= 1000;
+    if (blobs.length > 1) { // album (Telegram allows 2 to 10 items)
+      const fd = new FormData(); fd.append('chat_id', env('TG_CHAT_ID'));
+      fd.append('media', JSON.stringify(blobs.map((_, i) => ({ type: 'photo', media: `attach://f${i}`, ...(i === 0 && short ? { caption: post.text } : {}) }))));
+      blobs.forEach((b, i) => fd.append(`f${i}`, b, `image${i}`));
+      const r = await postForm(tgApi('sendMediaGroup'), fd);
+      if (!short) await postJson(tgApi('sendMessage'), { chat_id: env('TG_CHAT_ID'), text: post.text });
+      return { via: 'telegram', ref: String(r.result?.[0]?.message_id || '') };
+    }
     if (blob) {
-      const fd = new FormData(), short = post.text.length <= 1000;
+      const fd = new FormData();
       fd.append('chat_id', env('TG_CHAT_ID')); fd.append('photo', blob, 'image'); if (short) fd.append('caption', post.text);
       const r = await postForm(tgApi('sendPhoto'), fd);
       if (!short) await postJson(tgApi('sendMessage'), { chat_id: env('TG_CHAT_ID'), text: post.text });
@@ -270,8 +289,9 @@ async function publish(post, campaign, loadMedia) {
     return { via: 'telegram', ref: String(r.result?.message_id || '') };
   }
   if (c.webhook) {
+    const urls = siteBase() ? ids.slice(0, imgs.length).map(id => `${siteBase()}/api/media/${id}`) : [];
     await postJson(env('PUBLISH_WEBHOOK_URL'), { event: 'post.publish', channel: ch, text: post.text, campaign: campaign?.name || '', at: post.at,
-      ...(img && siteBase() ? { image_url: `${siteBase()}/api/media/${post.image}` } : {}) });
+      ...(urls[0] ? { image_url: urls[0] } : {}), ...(urls.length > 1 ? { image_urls: urls, carousel: true } : {}) });
     return { via: 'webhook', ref: '' };
   }
   return null;
@@ -577,6 +597,21 @@ ${instruction ? 'הנחיה: ' + instruction + '\n' : ''}כל וריאציה: "h
         .filter(o => o.headline).map(o => ({ ...o, risk: checkText(`${o.headline} ${o.sub} ${o.cta}`) }));
       if (!options.length) throw httpErr(502, 'ה-AI לא החזיר כותרות, נסו שוב');
       return { options };
+    },
+    // A carousel: N short slides (hook, points, call to action) written from the post, for the banner designer.
+    async carousel(S, b) {
+      const text = String(b.text || '').trim().slice(0, 1800), n = clamp(Math.round(+b.count) || 5, 2, 8);
+      if (!text) throw httpErr(400, 'כתבו קודם את טקסט הפוסט');
+      const raw = await claude(`אתה קופירייטר שיווקי בעברית. הפוך את הפוסט לקרוסלה של ${n} שקופיות לאינסטגרם או פייסבוק.
+${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0, 400) + '\n' : ''}פוסט: ${text}
+מבנה: שקופית ראשונה היא וו שגורם לעצור ולהמשיך (שאלה או משפט פותח), האמצעיות הן נקודה אחת בכל שקופית, והאחרונה קריאה לפעולה.
+לכל שקופית: "headline" עד 7 מילים, "sub" עד 14 מילים (אפשר ריק), "cta" עד 3 מילים (רק בשקופית האחרונה, בשאר ריק). בלי הבטחות רפואיות, בלי טענות ריפוי, בלי להמציא עובדות או מספרים.
+החזר JSON תקין בלבד: מערך של ${n} אובייקטים {"headline":"","sub":"","cta":""}.`, 1200);
+      let arr; try { arr = JSON.parse(raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1)); } catch { throw httpErr(502, 'ה-AI החזיר תשובה לא תקינה, נסו שוב'); }
+      const slides = arr.slice(0, n).map(o => ({ headline: String(o.headline || '').slice(0, 80), sub: String(o.sub || '').slice(0, 140), cta: String(o.cta || '').slice(0, 40) }))
+        .filter(o => o.headline).map(o => ({ ...o, risk: checkText(`${o.headline} ${o.sub} ${o.cta}`) }));
+      if (slides.length < 2) throw httpErr(502, 'ה-AI לא החזיר מספיק שקופיות, נסו שוב');
+      return { slides };
     },
     // A short English description for the image model, written from the post text.
     async 'image-prompt'(S, b) {
@@ -1033,12 +1068,12 @@ ${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
       if (parts[1] === 'quick-campaign' && String(b.idea || '').trim().length < 3) throw httpErr(400, 'ספרו במשפט אחד מה רוצים לקדם');
       if (parts[1] === 'plan' && !(await store.get('campaigns', String(b.campaign || '')))) throw httpErr(404, 'קמפיין לא נמצא');
       if (parts[1] === 'improve' && !env('ANTHROPIC_API_KEY')) throw httpErr(400, 'לשדרוג עם AI חברו מפתח בהגדרות ← בינה מלאכותית');
-      if (['banner-copy', 'image-prompt'].includes(parts[1]) && !env('ANTHROPIC_API_KEY')) throw httpErr(400, 'חברו מפתח AI בהגדרות ← בינה מלאכותית');
+      if (['banner-copy', 'image-prompt', 'carousel'].includes(parts[1]) && !env('ANTHROPIC_API_KEY')) throw httpErr(400, 'חברו מפתח AI בהגדרות ← בינה מלאכותית');
       if (parts[1] === 'image') {
         if (!env('OPENAI_API_KEY')) throw httpErr(400, 'ליצירת תמונות חברו מפתח OpenAI בהגדרות ← יצירת תמונות');
         if (limited('img:' + user.email, 12, 3600e3)) throw httpErr(429, 'חריגה ממכסת יצירת תמונות לשעה');
       }
-      if (['generate', 'quick-campaign', 'plan', 'improve', 'banner-copy', 'image-prompt', 'image'].includes(parts[1])) return send(res, 200, await runAi(store, user, ws, parts[1], b));
+      if (['generate', 'quick-campaign', 'plan', 'improve', 'banner-copy', 'carousel', 'image-prompt', 'image'].includes(parts[1])) return send(res, 200, await runAi(store, user, ws, parts[1], b));
     }
 
     if (parts[0] === 'campaigns' && parts[1] === 'order' && method === 'POST') {
@@ -1190,6 +1225,10 @@ ${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
       const kind = parts[0], id = parts[1];
       const guard = b => {
         if (kind === 'leads' && b.next && !/^\d{4}-\d{2}-\d{2}$/.test(String(b.next))) throw httpErr(400, 'תאריך לא תקין');
+        if (kind === 'posts') { // carousel: up to 10 stored images; `image` stays the cover, and replacing a single image clears the carousel
+          if ('images' in b) { b.images = (Array.isArray(b.images) ? b.images : []).map(String).filter(x => /^[a-f0-9]{24}$/.test(x)).slice(0, 10); if (b.images.length) b.image = b.images[0]; else if (!('image' in b)) b.image = ''; }
+          else if ('image' in b) b.images = [];
+        }
         if (kind === 'posts') for (const k of ['assetLink', 'liveLink']) if (b[k] && !/^https?:\/\/\S+$/.test(String(b[k]).trim())) throw httpErr(400, 'קישור חייב להתחיל ב-http או https');
         return b;
       };

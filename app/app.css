@@ -194,3 +194,10 @@ input[dir=ltr],textarea[dir=ltr]{text-align:left}
 @media (max-width:820px){#whoami{display:none}.shell{width:calc(100% - 24px)}.app{min-width:0}}
 
 .eye2{inset-inline-end:44px}.pw:has(.eye2) input{padding-inline-end:84px}
+
+/* carousel */
+.st-strip{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.st-slide{position:relative;border:2px solid #8884;border-radius:8px;background:var(--bg);padding:2px;cursor:pointer}.st-slide.on{border-color:var(--brand)}
+.st-slide canvas{display:block;border-radius:5px}.st-slide span{position:absolute;inset-block-start:2px;inset-inline-start:4px;background:#000a;color:#fff;border-radius:99px;font-size:.7rem;padding:0 6px}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.thumbs .thumb{width:72px;height:72px;object-fit:cover}
+.st-slide-acts{display:flex;gap:6px;flex-wrap:wrap}

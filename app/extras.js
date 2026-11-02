@@ -130,7 +130,7 @@ function editPostDialog(id) {
         <label>עמוד תוכן <input name="pillar" value="${esc(p.pillar || '')}"></label><label>סוג תוכן <input name="bucket" value="${esc(p.bucket || '')}"></label>
         <label>נושא <input name="topic" value="${esc(p.topic || '')}"></label><label>סוג נכס (Reel, Carousel, Banner…) <input name="assetType" value="${esc(p.assetType || '')}"></label>
         <label>קישור לקובץ <input name="assetLink" type="url" dir="ltr" value="${esc(p.assetLink || '')}"></label><label>קישור לפוסט שפורסם <input name="liveLink" type="url" dir="ltr" value="${esc(p.liveLink || '')}"></label></div></details>
-      ${thumb(p.image)}${p.status !== 'פורסם' ? riskHtml(p.risk) : ''}
+      ${p.images?.length > 1 ? `<div class="thumbs">${p.images.map(thumb).join('')}<span class="tag">🎠 קרוסלה · ${p.images.length}</span></div>` : thumb(p.image)}${p.status !== 'פורסם' ? riskHtml(p.risk) : ''}
       <div class="qfoot">${locked ? '' : '<button class="btn" type="submit">שמירה</button>'}${locked ? '' : '<button type="button" class="btn btn-ghost" id="postdlg-del">מחיקה</button>'}<button type="button" class="link" id="postdlg-close">סגירה</button></div>
     </form>`;
   dlg.showModal();
