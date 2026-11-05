@@ -154,6 +154,7 @@ export const LESSONS = {
 
 // Release notes. Newest first. Add an entry (and a lesson if needed) with every shipped change.
 export const RELEASES = [
+  { id: 'r21', date: '2026-11-05', title: 'רקעים מצוירים על ידי Claude', summary: 'בסטודיו אפשר לבקש רקע מצויר מ-Claude, בלי מפתח OpenAI. הוא נוצר כציור וקטורי ומשמש כרקע לבאנר או לשקופית.', lessons: ['banner-studio'] },
   { id: 'r20', date: '2026-11-02', title: 'קרוסלות: כמה תמונות בפוסט אחד', summary: 'בסטודיו אפשר ליצור כמה שקופיות, לבנות קרוסלה מהפוסט עם AI או בפיצול הטקסט, ולפרסם אלבום בפייסבוק ובטלגרם. בוובהוק מגיעות כל הכתובות (image_urls).', lessons: ['banner-studio'] },
   { id: 'r19', date: '2026-10-30', title: 'צ׳קליסט הקמה בהגדרות', summary: 'בכניסה להגדרות קופץ צ׳קליסט שמראה מה כבר מחובר ומה חסר, עם מעבר ישיר לכל חיבור. אפשר לכבות או לפתוח מחדש בכפתור למעלה.', lessons: ['integrations'] },
   { id: 'r18', date: '2026-10-30', title: 'תפריט צד מסודר', summary: 'התפריט עבר לצד, מחולק לקבוצות (התחלה, שיווק, ליווי ושיפור, ניהול), עם ההדרכה בראש. בנייד הוא שורה נגללת.', lessons: [] },

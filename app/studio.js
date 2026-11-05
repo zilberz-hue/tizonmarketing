@@ -113,7 +113,10 @@ function openStudio({ text = '', onDone } = {}) {
         <div id="st-overlay-row" hidden><label>כהות שכבה על התמונה <input id="st-overlay" type="range" min="0" max="0.8" step="0.05" value="0.35"></label></div>
         ${caps.image ? `<div class="panel st-ai"><label>🎨 רקע מ-AI: תארו מה לצייר <textarea id="st-prompt" rows="2" placeholder="למשל: שדה פתוח באור בוקר רך, אווירה רגועה"></textarea></label>
           <div class="qfoot">${caps.ai ? '<button type="button" class="link" id="st-suggest-prompt">✨ הציעו תיאור לפי הפוסט</button>' : ''}<button type="button" class="btn btn-sm" id="st-gen">צרו רקע</button><span id="st-gen-status" class="meta" role="status"></span></div></div>`
-          : '<p class="meta">רוצים רקעים שנוצרים ב-AI? חברו מפתח OpenAI ב<a href="#" id="st-to-settings">הגדרות ← יצירת תמונות</a>. המעצב עובד גם בלעדיו.</p>'}
+          : ''}
+        ${caps.ai ? `<div class="panel st-ai"><label>🎨 רקע מצויר על ידי Claude (בלי מפתח תמונות): תארו מה לצייר <textarea id="st-svg-prompt" rows="2" placeholder="למשל: עלים רכים וגלים בצבעי חום וירוק, אווירה רגועה"></textarea></label>
+          <div class="qfoot"><button type="button" class="btn btn-sm" id="st-svg-gen">צרו רקע</button><span id="st-svg-status" class="meta" role="status"></span></div></div>`
+          : (caps.image ? '' : '<p class="meta">רוצים רקעים שנוצרים ב-AI? חברו מפתח AI ב<a href="#" id="st-to-settings">הגדרות ← בינה מלאכותית</a>. המעצב עובד גם בלעדיו.</p>')}
         <label>כותרת <input id="st-headline" value="${esc(studio.headline)}" maxlength="80"></label>
         <label>שורת משנה (אופציונלי) <input id="st-sub" maxlength="140"></label>
         <label>טקסט הכפתור <input id="st-cta" value="${esc(studio.cta)}" maxlength="40"></label>
@@ -216,6 +219,17 @@ function openStudio({ text = '', onDone } = {}) {
       const portrait = studio.h > studio.w, wide = studio.w > studio.h;
       const r = await aiCall('/ai/image', { prompt, size: portrait ? '1024x1536' : wide ? '1536x1024' : '1024x1024' });
       useImage(await loadImg(r.url)); st.textContent = 'הרקע מוכן ✨';
+    } catch (e) { st.textContent = e.message === 'auth' ? '' : '❌ ' + e.message; }
+    finally { btn.disabled = false; }
+  });
+  // a vector background drawn by Claude: arrives as SVG markup, shown through an <img> so nothing in it can run
+  $$('st-svg-gen')?.addEventListener('click', async () => {
+    const st = $$('st-svg-status'), btn = $$('st-svg-gen'), prompt = $$('st-svg-prompt').value.trim();
+    if (prompt.length < 3) { st.textContent = 'תארו במשפט מה לצייר'; return; }
+    btn.disabled = true; st.textContent = 'מצייר… (עד כדקה)';
+    try {
+      const r = await aiCall('/ai/svg-bg', { prompt, w: studio.w, h: studio.h });
+      useImage(await loadImg('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(r.svg))); st.textContent = 'הרקע מוכן ✨';
     } catch (e) { st.textContent = e.message === 'auth' ? '' : '❌ ' + e.message; }
     finally { btn.disabled = false; }
   });

@@ -25,7 +25,7 @@ export const GROUPS = [
       { key: 'ANTHROPIC_API_KEY', label: 'מפתח API', secret: true, placeholder: 'sk-ant-…' },
       { key: 'AI_MODEL', label: 'מודל (אופציונלי)', placeholder: 'claude-sonnet-5-5' }
     ] },
-  { id: 'image', title: '🎨 יצירת תמונות עם AI', desc: 'רקעים ותמונות לפוסטים ולבאנרים. המעצב של הבאנרים עובד גם בלי מפתח. יצירת תמונות בתשלום לפי שימוש אצל הספק.', test: 'image', required: ['OPENAI_API_KEY'],
+  { id: 'image', title: '🎨 יצירת תמונות עם AI', desc: 'אופציונלי: תמונות מציאותיות מ-OpenAI. לא חובה: כשיש מפתח AI של Claude אפשר לצייר רקעים בסטודיו גם בלי זה, והמעצב עובד גם בלי AI בכלל.', test: 'image', required: ['OPENAI_API_KEY'],
     help: 'מפתח מ-platform.openai.com ← API keys. ייתכן שיידרש אימות ארגון לפני שימוש במודל התמונות.',
     fields: [
       { key: 'OPENAI_API_KEY', label: 'מפתח OpenAI', secret: true, placeholder: 'sk-…' },

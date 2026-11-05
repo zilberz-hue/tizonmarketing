@@ -35,6 +35,7 @@ const mock2 = http.createServer((req, res) => {
       const prompt = body.messages?.[0]?.content || '';
       const text = prompt.includes('ספר פעולה חי') ? '# ספר הפעולה שלנו\n## איך אנחנו עובדים\nעובדים לפי תוכנית שבועית, מפרסמים בפייסבוק ובטלגרם, ומודדים כל שבוע את עלות הליד. ## מה כדאי לעשות עכשיו: להמשיך.'
         : prompt.includes('המדריך של מערכת השיווק') ? 'לחצו על הסטודיו ובחרו גודל. [[lesson:banner-studio]]'
+        : prompt.includes('ציור וקטורי') ? '<svg viewBox="0 0 10 10" onload="x()"><script>alert(1)</script><rect width="10" height="10" fill="url(https://evil.example/x)" onclick="y()"/><image href="https://evil.example/i.png"/><circle cx="5" cy="5" r="3"/></svg>'
         : prompt.includes('קרוסלה של') ? JSON.stringify([{ headline: 'מתלבטים מאיפה להתחיל?', sub: '', cta: '' }, { headline: 'שיחת היכרות', sub: 'מבינים את המצב', cta: '' }, { headline: 'המוצר מרפא הכול', sub: '', cta: 'צרו קשר' }])
         : prompt.includes('כותרות לבאנר') ? JSON.stringify([{ headline: 'כותרת א', sub: 'שורה א', cta: 'התקשרו' }, { headline: 'המוצר מרפא', sub: '', cta: 'עכשיו' }, { headline: 'כותרת ג', sub: '', cta: '' }])
         : prompt.includes('Write ONE short English prompt') ? 'calm wellness background, soft light'
@@ -416,6 +417,10 @@ assert.equal(leadsNow.find(l => l.name === 'זר').campaign, '');
   const car2 = (await call('POST', '/api/ai/carousel', { text: 'פוסט על ייעוץ בריאות', count: 3 })).data;
   assert.equal(car2.slides.length, 3); assert.equal(car2.slides[2].cta, 'צרו קשר'); assert.ok(car2.slides[2].risk?.level, 'slides go through the compliance check');
   assert.equal((await call('POST', '/api/ai/carousel', { text: '' })).status, 400);
+  const bg = (await call('POST', '/api/ai/svg-bg', { prompt: 'עלים רכים בבוקר', w: 1080, h: 1350 })).data.svg;
+  assert.ok(bg.startsWith('<svg') && bg.includes('width="1080"') && bg.includes('height="1350"') && bg.includes('<circle'), 'valid sized SVG');
+  assert.ok(!/script|onload|onclick|evil\.example|<image/i.test(bg), 'active and external content is stripped');
+  assert.equal((await call('POST', '/api/ai/svg-bg', { prompt: '' })).status, 400);
   const ip = await call('POST', '/api/ai/image-prompt', { text: 'שיחת היכרות חינם' });
   assert.equal(ip.data.prompt, 'calm wellness background, soft light');
 

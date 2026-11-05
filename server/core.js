@@ -630,6 +630,23 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
       if (slides.length < 2) throw httpErr(502, 'ה-AI לא החזיר מספיק שקופיות, נסו שוב');
       return { slides };
     },
+    // A vector background drawn by Claude (no image-generation key needed): returned as SVG markup that the banner designer paints.
+    async 'svg-bg'(S, b) {
+      const prompt = String(b.prompt || '').trim().slice(0, 300), w = clamp(Math.round(+b.w) || 1080, 400, 2000), h = clamp(Math.round(+b.h) || 1080, 400, 2400);
+      if (prompt.length < 3) throw httpErr(400, 'תארו במשפט מה לצייר');
+      const raw = await claude(`אתה מעצב גרפי. צור ציור וקטורי (SVG) לשמש כרקע לבאנר של מותג בריאות ורווחה.
+תיאור: ${prompt}
+דרישות: אלמנט <svg> יחיד עם viewBox="0 0 ${w} ${h}", בלי טקסט ובלי אותיות, בלי לוגו, בלי פנים או אנשים, בלי תמונות חיצוניות. צורות מופשטות ורכות (מעברי צבע, עלים, עיגולים, גלים), אווירה רגועה, בצבעי המותג (חום זהוב #9a6a2a, ירוק #5f8f08, קרם #f7f3ea) או בגוון שמתאים לתיאור. התוכן צריך להיות כהה או בינוני מספיק כדי שטקסט לבן יהיה קריא מעליו, ובלי פרטים עמוסים במרכז.
+החזר רק את קוד ה-SVG, בלי הסברים ובלי גדר קוד.`, 3500);
+      const m = /<svg[\s\S]*<\/svg>/i.exec(raw);
+      if (!m) throw httpErr(502, 'ה-AI לא החזיר ציור תקין, נסו שוב');
+      // the result is only ever shown through <img>, where scripts cannot run, but strip anything active or external anyway
+      let svg = m[0].replace(/<(script|foreignObject|iframe|object|embed|image|use|a)\b[\s\S]*?(<\/\1>|\/>)/gi, '').replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+        .replace(/(xlink:)?href\s*=\s*("[^"]*"|'[^']*')/gi, '').replace(/url\(\s*['"]?(?!#)[^)]*\)/gi, 'none');
+      if (svg.length > 60000) throw httpErr(502, 'הציור גדול מדי, נסו תיאור פשוט יותר');
+      svg = svg.replace(/^<svg\b([^>]*)>/i, (all, attrs) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid slice"${attrs.replace(/\s(xmlns|width|height|viewBox|preserveAspectRatio)\s*=\s*("[^"]*"|'[^']*')/gi, '')}>`);
+      return { svg };
+    },
     // A short English description for the image model, written from the post text.
     async 'image-prompt'(S, b) {
       const text = String(b.text || '').trim().slice(0, 1500);
@@ -1085,12 +1102,12 @@ ${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
       if (parts[1] === 'quick-campaign' && String(b.idea || '').trim().length < 3) throw httpErr(400, 'ספרו במשפט אחד מה רוצים לקדם');
       if (parts[1] === 'plan' && !(await store.get('campaigns', String(b.campaign || '')))) throw httpErr(404, 'קמפיין לא נמצא');
       if (parts[1] === 'improve' && !env('ANTHROPIC_API_KEY')) throw httpErr(400, 'לשדרוג עם AI חברו מפתח בהגדרות ← בינה מלאכותית');
-      if (['banner-copy', 'image-prompt', 'carousel'].includes(parts[1]) && !env('ANTHROPIC_API_KEY')) throw httpErr(400, 'חברו מפתח AI בהגדרות ← בינה מלאכותית');
+      if (['banner-copy', 'image-prompt', 'carousel', 'svg-bg'].includes(parts[1]) && !env('ANTHROPIC_API_KEY')) throw httpErr(400, 'חברו מפתח AI בהגדרות ← בינה מלאכותית');
       if (parts[1] === 'image') {
         if (!env('OPENAI_API_KEY')) throw httpErr(400, 'ליצירת תמונות חברו מפתח OpenAI בהגדרות ← יצירת תמונות');
         if (limited('img:' + user.email, 12, 3600e3)) throw httpErr(429, 'חריגה ממכסת יצירת תמונות לשעה');
       }
-      if (['generate', 'quick-campaign', 'plan', 'improve', 'banner-copy', 'carousel', 'image-prompt', 'image'].includes(parts[1])) return send(res, 200, await runAi(store, user, ws, parts[1], b));
+      if (['generate', 'quick-campaign', 'plan', 'improve', 'banner-copy', 'carousel', 'svg-bg', 'image-prompt', 'image'].includes(parts[1])) return send(res, 200, await runAi(store, user, ws, parts[1], b));
     }
 
     if (parts[0] === 'campaigns' && parts[1] === 'order' && method === 'POST') {
