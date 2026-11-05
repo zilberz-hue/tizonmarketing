@@ -119,7 +119,8 @@ export async function saveSettings(store, ws, patch = {}, clear = []) {
   const values = { ...(rec.values || {}) };
   for (const [k, raw] of Object.entries(patch)) {
     if (!FIELDS.has(k) || typeof raw !== 'string') continue;
-    const v = raw.trim().slice(0, 2000);
+    // secrets never contain spaces, quotes or invisible direction marks; pasting from a Hebrew page or a document often adds them
+    const v = (SECRETS.has(k) ? raw.replace(/[\s\u200B-\u200F\u202A-\u202E\u2060\uFEFF"'“”‘’`]/g, '') : raw.trim()).slice(0, 2000);
     if (v === '') { if (!SECRETS.has(k)) delete values[k]; continue; } // empty secret = keep current
     validate(k, v);
     values[k] = SECRETS.has(k) ? seal(v) : v;

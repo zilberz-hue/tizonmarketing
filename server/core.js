@@ -81,6 +81,8 @@ const AUTH_HINTS = {
   'api.telegram.org': 'טלגרם דחתה את הטוקן של הבוט. העתיקו אותו שוב מ-BotFather בהגדרות ← טלגרם.',
   'api.resend.com': 'Resend דחתה את המפתח. צרו מפתח חדש בהגדרות ← אימייל.'
 };
+// Describes a stored key without revealing it, so a mis-pasted key can be spotted (length, prefix, stray characters).
+const keyShape = (k, prefix) => !k ? 'אין מפתח שמור' : [`אורך ${k.length} תווים`, k.startsWith(prefix) ? `מתחיל ב-${prefix} ✓` : `לא מתחיל ב-${prefix} ✗`, /[^\x21-\x7e]/.test(k) ? 'מכיל תווים לא תקינים ✗' : ''].filter(Boolean).join(', ');
 async function ext(url, init, ms = 15000) {
   const host = new URL(url).hostname;
   let r;
@@ -88,7 +90,8 @@ async function ext(url, init, ms = 15000) {
   catch (e) { throw httpErr(502, `${host}: ${e.name === 'TimeoutError' ? 'השירות לא ענה בזמן' : 'לא ניתן להתחבר לשירות'}`); }
   if (!r.ok) {
     const detail = `${host} ${r.status}: ${(await r.text()).slice(0, 200)}`;
-    const hint = r.status === 401 || r.status === 403 ? AUTH_HINTS[host] : '';
+    const shape = host === 'api.anthropic.com' ? keyShape(env('ANTHROPIC_API_KEY'), 'sk-ant-') : host === 'api.openai.com' ? keyShape(env('OPENAI_API_KEY'), 'sk-') : '';
+    const hint = r.status === 401 || r.status === 403 ? (AUTH_HINTS[host] ? AUTH_HINTS[host] + (shape ? `\nהמפתח השמור: ${shape}.` : '') : '') : '';
     throw httpErr(502, hint ? `${hint}\n${detail}` : detail);
   }
   return r;
@@ -101,7 +104,9 @@ const tgApi = m => `${env('TELEGRAM_API_URL') || 'https://api.telegram.org'}/bot
 // Lead notifications contain personal data, so they must never go to a public channel/group:
 // use the private notification chat, or TG_CHAT_ID only when it is a private user chat (positive number).
 const notifyChat = () => env('TG_NOTIFY_CHAT_ID') || (/^\d+$/.test(env('TG_CHAT_ID')) ? env('TG_CHAT_ID') : '');
-const openaiBase = () => (env('OPENAI_BASE_URL') || 'https://api.openai.com/v1').replace(/\/$/, '');
+// Netlify's AI Gateway injects OPENAI_BASE_URL (".../.netlify/ai") into functions. That gateway only accepts Netlify-issued credentials,
+// so it rejects a key typed in Settings with 401. Ignore it and talk to OpenAI directly (the in-app key is the user's own).
+const openaiBase = () => { const b = env('OPENAI_BASE_URL'); return (b && !/\.netlify\/ai/.test(b) ? b : 'https://api.openai.com/v1').replace(/\/$/, ''); };
 const fbApi = () => env('FACEBOOK_API_URL') || 'https://graph.facebook.com/v19.0';
 let lastOrigin = '';
 const siteBase = () => (env('SITE_URL') || process.env.URL || lastOrigin).replace(/\/$/, '');

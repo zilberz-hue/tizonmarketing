@@ -694,6 +694,27 @@ assert.ok(!ck.s1 && ck['k1@2026-10-04']);
   await call('DELETE', '/api/posts/' + done.id);
 }
 
+// pasted secrets are cleaned: spaces, quotes and invisible direction marks are removed on save
+{
+  await call('PUT', '/api/settings', { values: { TG_BOT_TOKEN: ' "111:AAA\u200f BBB" ' } });
+  const g = (await call('GET', '/api/settings')).data.groups.find(x => x.id === 'telegram').fields.find(f => f.key === 'TG_BOT_TOKEN');
+  assert.ok(g.set, 'stored');
+  assert.match(g.hint, /BBB$/, 'last characters come from the cleaned value, with no trailing quote');
+  await call('PUT', '/api/settings', { clear: ['TG_BOT_TOKEN'] });
+}
+
+// the Netlify AI Gateway's injected OPENAI_BASE_URL must never be used for a key typed in Settings
+{
+  const keep = process.env.OPENAI_BASE_URL;
+  process.env.OPENAI_BASE_URL = 'https://tizonmarketing.netlify.app/.netlify/ai';
+  await call('PUT', '/api/settings', { values: { OPENAI_API_KEY: 'sk-test-gateway' } });
+  const r = await call('POST', '/api/settings/test', { service: 'image' });
+  assert.ok(!/netlify\.app/.test(JSON.stringify(r.data)), 'does not call the platform gateway');
+  assert.match(JSON.stringify(r.data), /api\.openai\.com|openai/i, 'calls OpenAI directly instead');
+  process.env.OPENAI_BASE_URL = keep;
+  await call('PUT', '/api/settings', { clear: ['OPENAI_API_KEY'] });
+}
+
 const del = await call('DELETE', '/api/posts/' + p.id);
 assert.equal(del.status, 200);
 console.log('all tests passed');
