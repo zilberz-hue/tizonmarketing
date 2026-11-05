@@ -73,12 +73,24 @@ function limited(key, max, windowMs) {
 // --- connectors ---
 // Calls to outside services (AI, Facebook, Telegram, email, webhooks). Failures become a 502 whose message
 // says which service failed and why, instead of a generic "server error". Secrets are never part of the message.
+// A rejected key is the most common setup mistake, so say what to do about it in plain Hebrew (the raw reply follows).
+const AUTH_HINTS = {
+  'api.anthropic.com': 'מפתח ה-AI (Anthropic) נדחה: הוא לא תקין או בוטל. צרו מפתח חדש ב-console.anthropic.com ← API Keys, הדביקו אותו בהגדרות ← בינה מלאכותית ולחצו "בדיקת חיבור". מנוי Claude רגיל אינו מפתח API.',
+  'api.openai.com': 'מפתח OpenAI נדחה: הוא לא תקין או בוטל. צרו מפתח חדש ב-platform.openai.com ← API keys והדביקו אותו בהגדרות ← יצירת תמונות.',
+  'graph.facebook.com': 'פייסבוק דחתה את הטוקן: ייתכן שהוא פג תוקף. צרו טוקן דף חדש בהגדרות ← פייסבוק.',
+  'api.telegram.org': 'טלגרם דחתה את הטוקן של הבוט. העתיקו אותו שוב מ-BotFather בהגדרות ← טלגרם.',
+  'api.resend.com': 'Resend דחתה את המפתח. צרו מפתח חדש בהגדרות ← אימייל.'
+};
 async function ext(url, init, ms = 15000) {
   const host = new URL(url).hostname;
   let r;
   try { r = await fetch(url, { ...init, signal: AbortSignal.timeout(ms) }); }
   catch (e) { throw httpErr(502, `${host}: ${e.name === 'TimeoutError' ? 'השירות לא ענה בזמן' : 'לא ניתן להתחבר לשירות'}`); }
-  if (!r.ok) throw httpErr(502, `${host} ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  if (!r.ok) {
+    const detail = `${host} ${r.status}: ${(await r.text()).slice(0, 200)}`;
+    const hint = r.status === 401 || r.status === 403 ? AUTH_HINTS[host] : '';
+    throw httpErr(502, hint ? `${hint}\n${detail}` : detail);
+  }
   return r;
 }
 async function postJson(url, body, headers = {}) {
