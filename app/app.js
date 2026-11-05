@@ -68,7 +68,7 @@ function startProgress({ label, est = 10000 }) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const AI_LABELS = {
   '/ai/quick-campaign': ['בונה את הקמפיין', 25000], '/ai/plan': ['מתכנן לוח תוכן', 25000], '/ai/improve': ['משדרג את הטקסט', 9000], '/ai/generate': ['כותב פוסט', 9000],
-  '/ai/banner-copy': ['מנסח כותרות לבאנר', 9000], '/ai/carousel': ['בונה קרוסלה', 12000], '/ai/image-prompt': ['כותב תיאור לתמונה', 6000], '/ai/image': ['יוצר תמונה', 30000], '/compliance/fix': ['מתקן את הניסוח', 9000], '/insights': ['מנתח את הנתונים', 12000], '/guide/ask': ['המדריך מכין תשובה', 9000], '/guide/learn': ['מעדכן את ספר הידע', 15000]
+  '/ai/banner-copy': ['מנסח כותרות לבאנר', 9000], '/ai/carousel': ['בונה קרוסלה', 12000], '/ai/svg-bg': ['מצייר רקע', 20000], '/ai/image-prompt': ['כותב תיאור לתמונה', 6000], '/ai/image': ['יוצר תמונה', 30000], '/compliance/fix': ['מתקן את הניסוח', 9000], '/insights': ['מנתח את הנתונים', 12000], '/guide/ask': ['המדריך מכין תשובה', 9000], '/guide/learn': ['מעדכן את ספר הידע', 15000]
 };
 async function aiCall(path, body) {
   const [label, est] = AI_LABELS[path] || ['מעבד', 10000];
