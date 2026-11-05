@@ -104,7 +104,9 @@ const tgApi = m => `${env('TELEGRAM_API_URL') || 'https://api.telegram.org'}/bot
 // Lead notifications contain personal data, so they must never go to a public channel/group:
 // use the private notification chat, or TG_CHAT_ID only when it is a private user chat (positive number).
 const notifyChat = () => env('TG_NOTIFY_CHAT_ID') || (/^\d+$/.test(env('TG_CHAT_ID')) ? env('TG_CHAT_ID') : '');
-const openaiBase = () => (env('OPENAI_BASE_URL') || 'https://api.openai.com/v1').replace(/\/$/, '');
+// Netlify's AI Gateway injects OPENAI_BASE_URL (".../.netlify/ai") into functions. That gateway only accepts Netlify-issued credentials,
+// so it rejects a key typed in Settings with 401. Ignore it and talk to OpenAI directly (the in-app key is the user's own).
+const openaiBase = () => { const b = env('OPENAI_BASE_URL'); return (b && !/\.netlify\/ai/.test(b) ? b : 'https://api.openai.com/v1').replace(/\/$/, ''); };
 const fbApi = () => env('FACEBOOK_API_URL') || 'https://graph.facebook.com/v19.0';
 let lastOrigin = '';
 const siteBase = () => (env('SITE_URL') || process.env.URL || lastOrigin).replace(/\/$/, '');
