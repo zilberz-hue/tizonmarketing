@@ -1,6 +1,6 @@
 import { getStore } from '@netlify/blobs';
 import { createApp } from '../../server/core.js';
-import { blobsStore } from './blobs-store.mjs';
+import { blobsStore, freshBlobs } from './blobs-store.mjs';
 
 process.env.TRUST_PROXY ??= 'true';
 
@@ -13,4 +13,4 @@ const startJob = async jobId => {
   if (!r.ok && r.status !== 202) throw new Error(`background function ${r.status}`);
 };
 
-export const app = createApp(blobsStore(getStore({ name: 'tizon', consistency: 'strong' })), { startJob });
+export const app = createApp(blobsStore(freshBlobs(() => getStore({ name: 'tizon', consistency: 'strong' }))), { startJob });
