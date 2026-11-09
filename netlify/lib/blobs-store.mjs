@@ -1,6 +1,16 @@
 // Store adapter over a Netlify Blobs store (anything with get/setJSON/delete/list).
 const enc = encodeURIComponent;
 
+// A Netlify Blobs store created once at module load keeps the access token it was given then. Warm function instances live for
+// hours, the token expires, and every later call fails with "Token expired". So build the store again for each operation
+// (reading the current invocation's credentials), and retry once if a token still turned out to be stale.
+export const freshBlobs = getFresh => new Proxy({}, {
+  get: (_, method) => method === 'then' ? undefined : async (...args) => {
+    try { return await getFresh()[method](...args); }
+    catch (e) { if (/token expired/i.test(String(e?.message))) return getFresh()[method](...args); throw e; }
+  }
+});
+
 export function blobsStore(blobs) {
   const getJSON = async key => (await blobs.get(key, { type: 'json' })) ?? null;
   const listKeys = async prefix => (await blobs.list({ prefix })).blobs.map(b => b.key);

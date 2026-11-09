@@ -23,6 +23,7 @@ const fakeBlobs = {
 const { createApp } = await import('./core.js');
 const { blobsStore } = await import('../netlify/lib/blobs-store.mjs');
 const { makeHandler } = await import('../netlify/lib/handler.mjs');
+const { freshBlobs } = await import('../netlify/lib/blobs-store.mjs');
 const app = createApp(blobsStore(fakeBlobs));
 const handler = makeHandler(app);
 
@@ -133,6 +134,15 @@ assert.equal((await call('GET', '/state')).status, 401);
   process.env.ADMIN_EMAIL = 'late@b.co'; process.env.ADMIN_PASSWORD = 'password123';
   assert.equal((await login()).status, 200, 'admin is created once env vars appear');
   process.env.ADMIN_PASSWORD = saved; process.env.ADMIN_EMAIL = savedEmail;
+}
+
+// a store built once keeps its (expiring) token: freshBlobs builds it per operation and retries once on "Token expired"
+{
+  let built = 0, failOnce = true;
+  const fb = freshBlobs(() => { built++; return { async get(k) { if (failOnce && k === 'retry') { failOnce = false; throw new Error('Netlify Blobs has generated an internal error (Failed to decode token: Token expired)'); } return k; }, async setJSON() {}, async list() { return { blobs: [] }; } }; });
+  assert.equal(await fb.get('a'), 'a'); assert.equal(await fb.get('b'), 'b'); assert.equal(built, 2, 'a new store for every operation');
+  assert.equal(await fb.get('retry'), 'retry'); assert.equal(built, 4, 'one retry with a fresh store after an expired token');
+  await assert.rejects(() => freshBlobs(() => ({ get() { throw new Error('other'); } })).get('x'), /other/, 'other errors are not swallowed');
 }
 console.log('netlify adapter tests passed');
 process.exit(0);
