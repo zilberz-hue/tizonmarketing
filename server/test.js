@@ -33,7 +33,10 @@ const mock2 = http.createServer((req, res) => {
     if (req.url === '/anthropic-bad') { res.statusCode = 401; return res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } })); }
     if (req.url === '/anthropic') {
       const prompt = body.messages?.[0]?.content || '';
-      const text = prompt.includes('ספר פעולה חי') ? '# ספר הפעולה שלנו\n## איך אנחנו עובדים\nעובדים לפי תוכנית שבועית, מפרסמים בפייסבוק ובטלגרם, ומודדים כל שבוע את עלות הליד. ## מה כדאי לעשות עכשיו: להמשיך.'
+      const text = prompt.includes('מרכאות כפולות בתוך הערכים') ? JSON.stringify([{ headline: 'כותרת א', sub: 'שורה', cta: 'צרו קשר' }, { headline: 'כותרת ב', sub: '', cta: '' }, { headline: 'כותרת ג', sub: '', cta: '' }])
+        : prompt.includes('BROKENJSON') ? 'הנה ההצעות: [{"headline": "כותרת "עם" מרכאות", "sub": ""'
+        : prompt.includes('TRUNCATED') ? '[{"headline":"א","sub":"","cta":""},{"headline":"ב","sub":"","cta":""},{"headline":"ג","su'
+        : prompt.includes('ספר פעולה חי') ? '# ספר הפעולה שלנו\n## איך אנחנו עובדים\nעובדים לפי תוכנית שבועית, מפרסמים בפייסבוק ובטלגרם, ומודדים כל שבוע את עלות הליד. ## מה כדאי לעשות עכשיו: להמשיך.'
         : prompt.includes('המדריך של מערכת השיווק') ? 'לחצו על הסטודיו ובחרו גודל. [[lesson:banner-studio]]'
         : prompt.includes('ציור וקטורי') ? '<svg viewBox="0 0 10 10" onload="x()"><script>alert(1)</script><rect width="10" height="10" fill="url(https://evil.example/x)" onclick="y()"/><image href="https://evil.example/i.png"/><circle cx="5" cy="5" r="3"/></svg>'
         : prompt.includes('קרוסלה של') ? JSON.stringify([{ headline: 'מתלבטים מאיפה להתחיל?', sub: '', cta: '' }, { headline: 'שיחת היכרות', sub: 'מבינים את המצב', cta: '' }, { headline: 'המוצר מרפא הכול', sub: '', cta: 'צרו קשר' }])
@@ -414,6 +417,11 @@ assert.equal(leadsNow.find(l => l.name === 'זר').campaign, '');
   assert.equal(copy.status, 200); assert.equal(copy.data.options.length, 3);
   assert.equal(copy.data.options[0].headline, 'כותרת א'); assert.equal(copy.data.options[1].risk.level, 'high', 'risky banner copy is flagged');
   assert.equal((await call('POST', '/api/ai/banner-copy', {})).status, 400);
+  // unparsable AI JSON: one stricter retry; a reply cut off mid-array keeps the complete items
+  const retried = await call('POST', '/api/ai/banner-copy', { text: 'BROKENJSON פוסט' });
+  assert.equal(retried.status, 200); assert.equal(retried.data.options.length, 3, 'second, stricter attempt succeeds');
+  const cut = await call('POST', '/api/ai/carousel', { text: 'TRUNCATED פוסט', count: 4 });
+  assert.equal(cut.status, 200); assert.equal(cut.data.slides.length, 2, 'only the complete slides are kept');
   const car2 = (await call('POST', '/api/ai/carousel', { text: 'פוסט על ייעוץ בריאות', count: 3 })).data;
   assert.equal(car2.slides.length, 3); assert.equal(car2.slides[2].cta, 'צרו קשר'); assert.ok(car2.slides[2].risk?.level, 'slides go through the compliance check');
   assert.equal((await call('POST', '/api/ai/carousel', { text: '' })).status, 400);

@@ -328,6 +328,31 @@ async function claude(prompt, max = 1500) {
   }, 60000)).json().catch(() => ({}));
   return (r.content || []).map(b => b.text || '').join('').trim();
 }
+
+// Claude's JSON is usually fine, but sometimes arrives with prose around it, a trailing comma, an unescaped quote inside Hebrew text, or cut off
+// at the token limit. Parse it forgivingly (complete objects of a cut-off array are kept), and ask once more, stricter, before giving up.
+function parseAiJson(raw, kind) {
+  const open = kind === 'array' ? '[' : '{', close = kind === 'array' ? ']' : '}', s = String(raw || '').replace(/```(?:json)?/gi, '');
+  const attempt = t => { try { const v = JSON.parse(t); return (kind === 'array') === Array.isArray(v) && v && typeof v === 'object' ? v : null; } catch { return null; } };
+  const body = s.slice(s.indexOf(open), s.lastIndexOf(close) + 1);
+  const whole = attempt(body) ?? attempt(body.replace(/,\s*([\]}])/g, '$1'));
+  if (whole) return whole;
+  if (kind === 'array') {
+    const objs = [...s.matchAll(/\{[^{}]*\}/g)].map(m => { try { return JSON.parse(m[0]); } catch { return null; } }).filter(o => o && typeof o === 'object');
+    if (objs.length) return objs;
+  }
+  return null;
+}
+async function claudeJson(prompt, max, kind) {
+  let raw = await claude(prompt, max), v = parseAiJson(raw, kind);
+  if (!v) {
+    console.error('ai json: unparsable reply, retrying:', String(raw).slice(0, 160).replace(/\s+/g, ' '));
+    raw = await claude(prompt + '\nחשוב: החזר JSON תקין בלבד, בלי טקסט לפניו או אחריו, ובלי מרכאות כפולות בתוך הערכים (השתמשו בגרש ׳ או ״ במקום).', max);
+    v = parseAiJson(raw, kind);
+  }
+  if (!v) throw httpErr(502, 'ה-AI החזיר תשובה לא תקינה, נסו שוב');
+  return v;
+}
 const brief = c => c ? `קמפיין: ${c.name}\nיעד: ${c.goal}\nקהל: ${c.audience}\nמסר: ${c.message}\nערוצים: ${(c.channels || []).join(', ')}` : '';
 
 
@@ -561,12 +586,11 @@ export function createApp(store, opts = {}) {
       if (!channels.length) channels.push('Facebook');
       if (!env('ANTHROPIC_API_KEY')) return { ai: false, draft: cleanDraft(fallbackDraft(idea, channels, days), channels, days) };
       const n = Math.min(days, 10);
-      const raw = await claude(`אתה אסטרטג שיווק ישראלי. בנה קמפיין שלם בעברית לפי הרעיון.
+      let d = await claudeJson(`אתה אסטרטג שיווק ישראלי. בנה קמפיין שלם בעברית לפי הרעיון.
 חוקים: בלי הבטחות רפואיות או טענות ריפוי, בלי "לפני/אחרי", בלי מספרים או עובדות שלא ניתנו, קריאה אחת לפעולה בכל פוסט, טקסט קצר וברור, אימוג'י במידה.
 ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0, 500) + '\n' : ''}החזר JSON תקין בלבד, בלי הסברים: {"name":"שם קצר","goal":"אחד מ: ${GOALS.join(', ')}","audience":"תיאור קהל היעד","message":"המסר המרכזי בשורה אחת","posts":[{"day":0,"channel":"אחד מ: ${channels.join(', ')}","text":"..."}]}
 עד ${n} פוסטים לאורך ${days} ימים (day מ-0 עד ${days - 1}), מפוזרים בין הערוצים.
-הרעיון: ${idea}`, 3500);
-      let d; try { d = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); } catch { throw httpErr(502, 'ה-AI החזיר תשובה לא תקינה, נסו שוב'); }
+הרעיון: ${idea}`, 3500, 'object');
       const draft = cleanDraft(d, channels, days);
       if (!draft.posts.length) throw httpErr(502, 'ה-AI לא החזיר פוסטים, נסו שוב');
       return { ai: true, draft };
@@ -575,8 +599,7 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
       const c = await S.get('campaigns', String(b.campaign || ''));
       if (!c) throw httpErr(404, 'קמפיין לא נמצא');
       const days = Math.min(Math.max(+b.days || 7, 1), 30);
-      const raw = await claude(`תכנן לוח תוכן שיווקי בעברית ל-${days} ימים עבור הקמפיין. החזר JSON תקין בלבד: מערך של אובייקטים {"day":0..${days - 1},"channel":"אחד מ: ${(c.channels.length ? c.channels : ['Facebook']).join(', ')}","text":"..."}. עד 10 פוסטים.\n${brief(c)}`, 3000);
-      let arr; try { arr = JSON.parse(raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1)); } catch { throw httpErr(502, 'ה-AI החזיר תשובה לא תקינה, נסו שוב'); }
+      let arr = await claudeJson(`תכנן לוח תוכן שיווקי בעברית ל-${days} ימים עבור הקמפיין. החזר JSON תקין בלבד: מערך של אובייקטים {"day":0..${days - 1},"channel":"אחד מ: ${(c.channels.length ? c.channels : ['Facebook']).join(', ')}","text":"..."}. עד 10 פוסטים.\n${brief(c)}`, 3000, 'array');
       const start = Date.parse((c.start || new Date().toISOString().slice(0, 10)) + 'T10:00:00');
       const status = env('AUTO_APPROVE') === 'true' ? 'מתוזמן' : 'טיוטה';
       let created = 0;
@@ -605,11 +628,10 @@ ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0,
     async 'banner-copy'(S, b) {
       const text = String(b.text || '').trim().slice(0, 1500), instruction = String(b.instruction || '').trim().slice(0, 200);
       if (!text && !instruction) throw httpErr(400, 'כתבו טקסט או הנחיה כדי שאציע כותרות');
-      const raw = await claude(`אתה קופירייטר שיווקי בעברית. הצע 3 וריאציות של כותרות לבאנר גרפי, לפי הטקסט.
+      let arr = await claudeJson(`אתה קופירייטר שיווקי בעברית. הצע 3 וריאציות של כותרות לבאנר גרפי, לפי הטקסט.
 ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0, 400) + '\n' : ''}טקסט: ${text || '(אין)'}
 ${instruction ? 'הנחיה: ' + instruction + '\n' : ''}כל וריאציה: "headline" עד 6 מילים, "sub" עד 12 מילים (אפשר ריק), "cta" עד 3 מילים. בלי הבטחות רפואיות, בלי טענות ריפוי, בלי להמציא עובדות או מספרים.
-החזר JSON תקין בלבד: מערך של 3 אובייקטים {"headline":"","sub":"","cta":""}.`, 700);
-      let arr; try { arr = JSON.parse(raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1)); } catch { throw httpErr(502, 'ה-AI החזיר תשובה לא תקינה, נסו שוב'); }
+החזר JSON תקין בלבד: מערך של 3 אובייקטים {"headline":"","sub":"","cta":""}.`, 700, 'array');
       const options = arr.slice(0, 3).map(o => ({ headline: String(o.headline || '').slice(0, 80), sub: String(o.sub || '').slice(0, 140), cta: String(o.cta || '').slice(0, 40) }))
         .filter(o => o.headline).map(o => ({ ...o, risk: checkText(`${o.headline} ${o.sub} ${o.cta}`) }));
       if (!options.length) throw httpErr(502, 'ה-AI לא החזיר כותרות, נסו שוב');
@@ -619,12 +641,11 @@ ${instruction ? 'הנחיה: ' + instruction + '\n' : ''}כל וריאציה: "h
     async carousel(S, b) {
       const text = String(b.text || '').trim().slice(0, 1800), n = clamp(Math.round(+b.count) || 5, 2, 8);
       if (!text) throw httpErr(400, 'כתבו קודם את טקסט הפוסט');
-      const raw = await claude(`אתה קופירייטר שיווקי בעברית. הפוך את הפוסט לקרוסלה של ${n} שקופיות לאינסטגרם או פייסבוק.
+      let arr = await claudeJson(`אתה קופירייטר שיווקי בעברית. הפוך את הפוסט לקרוסלה של ${n} שקופיות לאינסטגרם או פייסבוק.
 ${env('BUSINESS_PROFILE') ? 'על העסק: ' + env('BUSINESS_PROFILE').slice(0, 400) + '\n' : ''}פוסט: ${text}
 מבנה: שקופית ראשונה היא וו שגורם לעצור ולהמשיך (שאלה או משפט פותח), האמצעיות הן נקודה אחת בכל שקופית, והאחרונה קריאה לפעולה.
 לכל שקופית: "headline" עד 7 מילים, "sub" עד 14 מילים (אפשר ריק), "cta" עד 3 מילים (רק בשקופית האחרונה, בשאר ריק). בלי הבטחות רפואיות, בלי טענות ריפוי, בלי להמציא עובדות או מספרים.
-החזר JSON תקין בלבד: מערך של ${n} אובייקטים {"headline":"","sub":"","cta":""}.`, 1200);
-      let arr; try { arr = JSON.parse(raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1)); } catch { throw httpErr(502, 'ה-AI החזיר תשובה לא תקינה, נסו שוב'); }
+החזר JSON תקין בלבד: מערך של ${n} אובייקטים {"headline":"","sub":"","cta":""}.`, 2200, 'array');
       const slides = arr.slice(0, n).map(o => ({ headline: String(o.headline || '').slice(0, 80), sub: String(o.sub || '').slice(0, 140), cta: String(o.cta || '').slice(0, 40) }))
         .filter(o => o.headline).map(o => ({ ...o, risk: checkText(`${o.headline} ${o.sub} ${o.cta}`) }));
       if (slides.length < 2) throw httpErr(502, 'ה-AI לא החזיר מספיק שקופיות, נסו שוב');
