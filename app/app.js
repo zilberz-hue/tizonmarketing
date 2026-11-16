@@ -254,6 +254,13 @@ document.addEventListener('click', safe(async e => {
   }
   else if (act === 'del-post') await api('DELETE', '/posts/' + id);
   else if (act === 'approve') await api('PUT', '/posts/' + id, { status: 'מתוזמן' });
+  else if (act === 'to-draft') { await api('PUT', '/posts/' + id, { status: 'טיוטה', error: '' }); toast('הפוסט הוחזר לטיוטה'); }
+  else if (act === 'camp-drafts') {
+    const n = db.posts.filter(p => p.campaign === id && ['מתוזמן', 'ממתין לבדיקה', 'ידני', 'נכשל'].includes(p.status)).length;
+    if (!n) { toast('אין פוסטים שטרם יצאו בקמפיין הזה'); return; }
+    if (!confirm(`להחזיר ${n} פוסטים של הקמפיין לטיוטה? הם לא יפורסמו עד שתאשרו אותם שוב. פוסטים שכבר פורסמו לא משתנים.`)) return;
+    await api('POST', `/campaigns/${id}/drafts`, {}); toast('הפוסטים הוחזרו לטיוטה');
+  }
   else if (act === 'published') await api('PUT', '/posts/' + id, { status: 'פורסם' });
   else if (act === 'del-lead' && confirm('למחוק את הליד?')) await api('DELETE', '/leads/' + id);
   else if (act === 'move') await api('PUT', '/leads/' + id, { stage: b.dataset.stage });
@@ -627,6 +634,7 @@ function renderCampaigns() {
         <button data-act="ai-plan" data-id="${c.id}">✨ תכנון תוכן אוטומטי</button>
         <button data-act="spend" data-id="${c.id}">עדכון הוצאה</button>
         ${statusBtns(c)}
+        <button data-act="camp-drafts" data-id="${c.id}" title="מחזיר את כל הפוסטים שטרם יצאו לטיוטה">📝 הפוסטים לטיוטה</button>
         <button class="danger" data-act="del-campaign" data-id="${c.id}">🗑 מחיקה</button>
       </div>
       <details class="more"><summary>עוד: מסר, קישורי מעקב, קידום וניהול</summary>
@@ -661,7 +669,7 @@ function renderPosts() {
         ${p.status !== 'פורסם' ? `<button data-act="attach-image" data-id="${p.id}">📷 ${p.image ? 'החלפת תמונה' : 'הוספת תמונה'}</button><button data-act="studio-post" data-id="${p.id}">🎨 באנר</button>` : ''}
         ${p.risk?.level && caps.ai && p.status !== 'פורסם' ? `<button data-act="fix-ai" data-id="${p.id}">✨ תקנו את הניסוח עם AI</button>` : ''}
         ${p.status === 'ממתין לבדיקה' ? `<button data-act="override" data-id="${p.id}">אשרו בכל זאת</button>` : ''}
-        ${p.status === 'טיוטה' ? `<button data-act="approve" data-id="${p.id}">אישור לפרסום</button>` : ''}${p.status !== 'פורסם' ? `<button data-act="published" data-id="${p.id}">סימון כפורסם</button>` : ''}
+        ${p.status === 'טיוטה' ? `<button data-act="approve" data-id="${p.id}">אישור לפרסום</button>` : ''}${['מתוזמן', 'ממתין לבדיקה', 'ידני', 'נכשל'].includes(p.status) ? `<button data-act="to-draft" data-id="${p.id}">↩ החזרה לטיוטה</button>` : ''}${p.status !== 'פורסם' ? `<button data-act="published" data-id="${p.id}">סימון כפורסם</button>` : ''}
         <button class="danger" data-act="del-post" data-id="${p.id}">מחיקה</button>
       </div></article>`;
   }).join('') || '<p class="meta">הלוח ריק.</p>';
