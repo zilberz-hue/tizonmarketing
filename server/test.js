@@ -728,6 +728,20 @@ assert.ok(!ck.s1 && ck['k1@2026-10-04']);
   await call('PUT', '/api/settings', { clear: ['OPENAI_API_KEY'] });
 }
 
+// campaign posts back to draft: unpublished ones only, and the scheduler then leaves them alone
+{
+  const c = (await call('POST', '/api/campaigns', { name: 'להחזרה לטיוטה', goal: 'לידים' })).data;
+  const mk = async status => (await call('POST', '/api/posts', { campaign: c.id, channel: 'Facebook', text: 'x ' + status, at: new Date(Date.now() + 864e5).toISOString(), status })).data;
+  const sched = await mk('מתוזמן'), done = await mk('פורסם'), draft = await mk('טיוטה');
+  const r = await call('POST', `/api/campaigns/${c.id}/drafts`, {});
+  assert.equal(r.status, 200); assert.equal(r.data.updated, 1);
+  const st = (await call('GET', '/api/state')).data.posts;
+  assert.equal(st.find(p => p.id === sched.id).status, 'טיוטה'); assert.equal(st.find(p => p.id === done.id).status, 'פורסם');
+  assert.equal((await call('POST', '/api/campaigns/aaaaaaaaaaaa/drafts', {})).status, 404);
+  assert.equal((await call('PUT', '/api/posts/' + draft.id, { status: 'טיוטה' })).data.status, 'טיוטה');
+  await call('DELETE', `/api/campaigns/${c.id}?posts=1`); await call('DELETE', '/api/posts/' + done.id);
+}
+
 const del = await call('DELETE', '/api/posts/' + p.id);
 assert.equal(del.status, 200);
 console.log('all tests passed');

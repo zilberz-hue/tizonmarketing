@@ -142,7 +142,7 @@ const addDays = (ymd, n) => new Date(Date.parse(ymd + 'T12:00:00Z') + n * 864e5)
 const FOLLOW_STEPS = [1, 3, 7]; // days after the previous contact
 // ---- Activity log: what was done, by whom, when. Never stores secrets or field values, only names and labels. ----
 const EVENT_TEXT = {
-  'campaigns.create': e => `נוצר קמפיין "${e.label}"`, 'campaigns.update': e => `עודכן קמפיין "${e.label}" (${(e.fields || []).join(', ')})`, 'campaigns.delete': e => `נמחק קמפיין "${e.label}"`, 'campaigns.reorder': () => 'שונה סדר הקמפיינים',
+  'campaigns.create': e => `נוצר קמפיין "${e.label}"`, 'campaigns.update': e => `עודכן קמפיין "${e.label}" (${(e.fields || []).join(', ')})`, 'campaigns.delete': e => `נמחק קמפיין "${e.label}"`, 'campaigns.reorder': () => 'שונה סדר הקמפיינים', 'campaigns.drafts': e => `${e.count} פוסטים של "${e.label}" הוחזרו לטיוטה`,
   'posts.import': e => `יובאו ${e.count} פוסטים מתוכנית תוכן`, 'posts.create': e => `נוסף פוסט ל-${e.channel || 'ערוץ'}: "${e.label}"`, 'posts.update': e => `עודכן פוסט "${e.label}" (${(e.fields || []).join(', ')})`, 'posts.delete': e => `נמחק פוסט "${e.label}"`,
   'post.published': e => `פורסם פוסט ב-${e.channel}: "${e.label}"`, 'post.blocked': e => `פוסט נעצר בבדיקת תאימות: "${e.label}"`, 'post.failed': e => `פרסום נכשל ב-${e.channel}: "${e.label}"`,
   'leads.create': e => `נוסף ליד "${e.label}"`, 'leads.update': e => `עודכן ליד "${e.label}" (${(e.fields || []).join(', ')})`, 'leads.delete': e => `נמחק ליד "${e.label}"`, 'leads.contacted': e => `נרשמה שיחה עם "${e.label}"`, 'lead.website': e => `ליד חדש מהאתר: "${e.label}"`,
@@ -1129,6 +1129,16 @@ ${events.map(e => `- ${describeEvent(e)}`).join('\n') || '(אין)'}
         if (limited('img:' + user.email, 12, 3600e3)) throw httpErr(429, 'חריגה ממכסת יצירת תמונות לשעה');
       }
       if (['generate', 'quick-campaign', 'plan', 'improve', 'banner-copy', 'carousel', 'svg-bg', 'image-prompt', 'image'].includes(parts[1])) return send(res, 200, await runAi(store, user, ws, parts[1], b));
+    }
+
+    if (parts[0] === 'campaigns' && parts[2] === 'drafts' && method === 'POST') {
+      // Take every unpublished post of a campaign back to draft, so nothing of it goes out until a person approves it again.
+      const c = /^[a-f0-9]{12}$/.test(parts[1] || '') ? await store.get('campaigns', parts[1]) : null;
+      if (!c) throw httpErr(404, 'קמפיין לא נמצא');
+      const posts = (await store.list('posts')).filter(p => p.campaign === c.id && ['מתוזמן', 'ממתין לבדיקה', 'ידני', 'נכשל'].includes(p.status));
+      await Promise.all(posts.map(p => store.put('posts', p.id, { ...p, status: 'טיוטה', error: '', attempts: 0 })));
+      await logEvent(store, user, 'campaigns.drafts', { label: labelOf(c), count: posts.length });
+      return send(res, 200, { updated: posts.length });
     }
 
     if (parts[0] === 'campaigns' && parts[1] === 'order' && method === 'POST') {
